@@ -1,8 +1,8 @@
 {
-  "Nickname": "FO4FalloutGeneticsPatch",
+  "Nickname": "Fallout Genetics Patcher",
   "Visibility": "Visible",
-  "OneLineDescription": "",
-  "LongDescription": "",
+  "OneLineDescription": "Fallout Genetics Patcher",
+  "LongDescription": "Distribute all custom head parts (eyes, hairstyles, etc...) to all NPC records. You need to regenerate FaceGeom for all affected NPCs.",
   "PreferredAutoVersioning": "Default",
   "RequiredMods": [],
   "TargetedReleases": [
