@@ -1,4 +1,5 @@
-﻿using Mutagen.Bethesda.WPF.Reflection.Attributes;
+using Mutagen.Bethesda.WPF.Reflection.Attributes;
+using System;
 
 namespace FO4FalloutGeneticsPatch
 {
@@ -12,7 +13,7 @@ namespace FO4FalloutGeneticsPatch
     {
         [MaintainOrder]
         [SettingName("Ignore CharGen presets")]
-        public bool IgnoreCharGen { get; set; } = true;
+        public bool IgnoreCharGen { get; set; } = false;
 
         [MaintainOrder]
         [SettingName("Use CharGen presets files")]

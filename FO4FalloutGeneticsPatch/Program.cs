@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -39,9 +39,11 @@ namespace FO4FalloutGeneticsPatch
                 if (record.IsDeleted) continue;
                 if (record.MajorFlags.HasFlag(HeadPart.MajorFlag.NonPlayable)) continue;
 
-                if (record.ValidRaces.IsNull ||
-                    (!record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsGhouls.FormKey) &&
-                     !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHuman.FormKey))) continue;
+                if (record.ValidRaces.IsNull) continue;
+                if (!record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsGhouls.FormKey) && 
+                    !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHuman.FormKey) && 
+                    !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHumanGhouls.FormKey))
+                        continue;
 
                 if ((record.Flags.HasFlag(HeadPart.Flag.Female) && record.Flags.HasFlag(HeadPart.Flag.Male)) ||
                     (!record.Flags.HasFlag(HeadPart.Flag.Female) && !record.Flags.HasFlag(HeadPart.Flag.Male)))
@@ -131,7 +133,7 @@ namespace FO4FalloutGeneticsPatch
             female.DefaultPreset.Add(Fallout4.HeadPart.FemaleEyesHumanAO.FormKey);
             female.DefaultPreset.Add(Fallout4.HeadPart.FemaleEyesHumanWet.FormKey);
 
-            var random = new Random(Settings.Seed);
+            Random random = new Random(Guid.NewGuid().GetHashCode());
 
             var presetPath = Path.Combine(state.DataFolderPath, "F4SE\\Plugins\\F4EE\\Presets\\falloutGenetics");
             foreach (var file in Directory.EnumerateFiles(presetPath, "*.json", SearchOption.TopDirectoryOnly))
@@ -152,7 +154,6 @@ namespace FO4FalloutGeneticsPatch
                 var record = npcContext.Record;
                 if (record is null) continue;
                 if (record.IsDeleted) continue;
-                if (Settings.IgnoreCharGen && record.Flags.HasFlag(Npc.Flag.IsCharGenFacePreset)) continue;
                 if (record.Race.IsNull || !record.Race.FormKey.Equals(Fallout4.Race.HumanRace.FormKey)) continue;
 
                 var newRecord = npcContext.GetOrAddAsOverride(state.PatchMod);
@@ -177,8 +178,11 @@ namespace FO4FalloutGeneticsPatch
                     if (male.Hair.Count > 0) parts.Add(male.Hair[random.Next(male.Hair.Count)].FormKey);
                     if (male.Brows.Count > 0) parts.Add(male.Brows[random.Next(male.Brows.Count)].FormKey);
                     if (male.Scar.Count > 0) parts.Add(male.Scar[random.Next(male.Scar.Count)].FormKey);
-                    if (male.FacialHair.Count > 0)
-                        parts.Add(male.FacialHair[random.Next(male.FacialHair.Count)].FormKey);
+                    if ( random.Next(1,6) < 3)
+                    {
+                        if (male.FacialHair.Count > 0)
+                            parts.Add(male.FacialHair[random.Next(male.FacialHair.Count)].FormKey);
+                    }
                     presets = male.Presets;
                 }
 
