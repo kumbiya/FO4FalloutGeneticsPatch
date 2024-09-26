@@ -178,7 +178,10 @@ namespace FO4FalloutGeneticsPatch
                     if (male.Hair.Count > 0) parts.Add(male.Hair[random.Next(male.Hair.Count)].FormKey);
                     if (male.Brows.Count > 0) parts.Add(male.Brows[random.Next(male.Brows.Count)].FormKey);
                     if (male.Scar.Count > 0) parts.Add(male.Scar[random.Next(male.Scar.Count)].FormKey);                 
+                    if (random.Next(1,6) < 3)
+                    {
                     if (male.FacialHair.Count > 0) parts.Add(male.FacialHair[random.Next(male.FacialHair.Count)].FormKey);
+                    };
                     presets = male.Presets;
                 }
 
