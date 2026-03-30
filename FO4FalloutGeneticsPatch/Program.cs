@@ -200,7 +200,6 @@ namespace FO4FalloutGeneticsPatch
                     AddRandomSimplePart(partSet, male.Brows, random);
                     AddRandomSimplePart(partSet, male.Scar, random);
 
-                    // Always assign a beard bundle if any valid facial-hair parent exists
                     AddRandomBundledPartDirectOnlySameMod(partSet, male.FacialHair, random);
 
                     presets = male.Presets;
@@ -266,9 +265,7 @@ namespace FO4FalloutGeneticsPatch
             foreach (var extra in chosen.ExtraParts)
             {
                 if (extra.IsNull) continue;
-
-                if (!extra.FormKey.ModKey.Equals(parentMod))
-                    continue;
+                if (!extra.FormKey.ModKey.Equals(parentMod)) continue;
 
                 target.Add(extra.FormKey);
             }
