@@ -32,8 +32,6 @@ namespace FO4FalloutGeneticsPatch
             var male = new GenderRecord();
             var neutral = new GenderRecord();
 
-            var allPlayableHeadParts = new List<IHeadPartGetter>();
-
             foreach (var hdptContext in state.LoadOrder.PriorityOrder.HeadPart().WinningContextOverrides())
             {
                 var record = hdptContext.Record;
@@ -46,8 +44,6 @@ namespace FO4FalloutGeneticsPatch
                     !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHuman.FormKey) &&
                     !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHumanGhouls.FormKey))
                     continue;
-
-                allPlayableHeadParts.Add(record);
 
                 bool femaleFlag = record.Flags.HasFlag(HeadPart.Flag.Female);
                 bool maleFlag = record.Flags.HasFlag(HeadPart.Flag.Male);
@@ -187,7 +183,7 @@ namespace FO4FalloutGeneticsPatch
                     AddParts(partSet, female.DefaultPreset);
 
                     AddRandomSimplePart(partSet, female.Eyes, random);
-                    AddRandomBundledPart(partSet, female.Hair, random, state, allPlayableHeadParts, true, includePrefixFamily: true);
+                    AddRandomBundledPart(partSet, female.Hair, random, state);
                     AddRandomSimplePart(partSet, female.Brows, random);
                     AddRandomSimplePart(partSet, female.Scar, random);
 
@@ -198,11 +194,12 @@ namespace FO4FalloutGeneticsPatch
                     AddParts(partSet, male.DefaultPreset);
 
                     AddRandomSimplePart(partSet, male.Eyes, random);
-                    AddRandomBundledPart(partSet, male.Hair, random, state, allPlayableHeadParts, false, includePrefixFamily: true);
+                    AddRandomBundledPart(partSet, male.Hair, random, state);
                     AddRandomSimplePart(partSet, male.Brows, random);
                     AddRandomSimplePart(partSet, male.Scar, random);
-                    AddRandomBundledPart(partSet, male.FacialHair, random, state, allPlayableHeadParts, false, includePrefixFamily: true);
-                    }
+
+                    // Always assign facial hair if there are any facial-hair records available
+                    AddRandomBundledPart(partSet, male.FacialHair, random, state);
 
                     presets = male.Presets;
                 }
@@ -245,94 +242,47 @@ namespace FO4FalloutGeneticsPatch
             HashSet<FormKey> target,
             List<IHeadPartGetter> source,
             Random random,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state,
-            IEnumerable<IHeadPartGetter> allPlayableHeadParts,
-            bool isFemale,
-            bool includePrefixFamily)
+            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
         {
             if (source.Count == 0) return;
 
             var chosen = source[random.Next(source.Count)];
             if (chosen is null) return;
 
-            AddHeadPartBundle(target, chosen, state, allPlayableHeadParts, isFemale, includePrefixFamily);
+            AddHeadPartBundle(target, chosen, state);
         }
 
         private static void AddHeadPartBundle(
             HashSet<FormKey> target,
             IHeadPartGetter chosen,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state,
-            IEnumerable<IHeadPartGetter> allPlayableHeadParts,
-            bool isFemale,
-            bool includePrefixFamily)
-        {
-            AddExtraPartsRecursive(target, chosen, state);
-
-            if (includePrefixFamily)
-            {
-                AddHeadPartsWithSamePrefix(target, chosen, allPlayableHeadParts, isFemale, state);
-            }
-        }
-
-        private static void AddHeadPartsWithSamePrefix(
-            HashSet<FormKey> target,
-            IHeadPartGetter chosen,
-            IEnumerable<IHeadPartGetter> candidates,
-            bool isFemale,
             IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
         {
-            var editorId = chosen.EditorID ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(editorId)) return;
-
-            int underscoreIndex = editorId.IndexOf('_');
-            if (underscoreIndex <= 0) return;
-
-            var prefix = editorId.Substring(0, underscoreIndex + 1);
-
-            foreach (var part in candidates)
-            {
-                if (part is null) continue;
-                if (part.FormKey == chosen.FormKey) continue;
-                if (string.IsNullOrWhiteSpace(part.EditorID)) continue;
-                if (!part.EditorID.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!GenderMatches(part, isFemale)) continue;
-                if (part.Type != chosen.Type) continue;
-
-                AddExtraPartsRecursive(target, part, state);
-            }
-        }
-
-        private static bool GenderMatches(IHeadPartGetter part, bool isFemale)
-        {
-            bool femaleFlag = part.Flags.HasFlag(HeadPart.Flag.Female);
-            bool maleFlag = part.Flags.HasFlag(HeadPart.Flag.Male);
-
-            if ((femaleFlag && maleFlag) || (!femaleFlag && !maleFlag))
-                return true;
-
-            if (isFemale && femaleFlag) return true;
-            if (!isFemale && maleFlag) return true;
-
-            return false;
+            AddExtraPartsRecursive(target, chosen, state, chosen.FormKey.ModKey);
         }
 
         private static void AddExtraPartsRecursive(
             HashSet<FormKey> target,
             IHeadPartGetter headPart,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
+            IPatcherState<IFallout4Mod, IFallout4ModGetter> state,
+            ModKey sourceMod)
         {
             var visited = new HashSet<FormKey>();
-            AddExtraPartsRecursiveInner(target, headPart, state, visited);
+            AddExtraPartsRecursiveInner(target, headPart, state, visited, sourceMod);
         }
 
         private static void AddExtraPartsRecursiveInner(
             HashSet<FormKey> target,
             IHeadPartGetter headPart,
             IPatcherState<IFallout4Mod, IFallout4ModGetter> state,
-            HashSet<FormKey> visited)
+            HashSet<FormKey> visited,
+            ModKey sourceMod)
         {
             if (headPart is null) return;
             if (!visited.Add(headPart.FormKey)) return;
+
+            // Only allow bundled parts from the same plugin as the selected hair/beard
+            if (!headPart.FormKey.ModKey.Equals(sourceMod))
+                return;
 
             target.Add(headPart.FormKey);
 
@@ -341,9 +291,10 @@ namespace FO4FalloutGeneticsPatch
             foreach (var extra in headPart.ExtraParts)
             {
                 if (extra.IsNull) continue;
+                if (!extra.FormKey.ModKey.Equals(sourceMod)) continue;
                 if (!state.LinkCache.TryResolve<IHeadPartGetter>(extra.FormKey, out var resolved)) continue;
 
-                AddExtraPartsRecursiveInner(target, resolved, state, visited);
+                AddExtraPartsRecursiveInner(target, resolved, state, visited, sourceMod);
             }
         }
 
