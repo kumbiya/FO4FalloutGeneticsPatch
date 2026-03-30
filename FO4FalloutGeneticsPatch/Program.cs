@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
@@ -33,6 +32,8 @@ namespace FO4FalloutGeneticsPatch
             var male = new GenderRecord();
             var neutral = new GenderRecord();
 
+            var allPlayableHeadParts = new List<IHeadPartGetter>();
+
             foreach (var hdptContext in state.LoadOrder.PriorityOrder.HeadPart().WinningContextOverrides())
             {
                 var record = hdptContext.Record;
@@ -46,8 +47,12 @@ namespace FO4FalloutGeneticsPatch
                     !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHumanGhouls.FormKey))
                     continue;
 
-                if ((record.Flags.HasFlag(HeadPart.Flag.Female) && record.Flags.HasFlag(HeadPart.Flag.Male)) ||
-                    (!record.Flags.HasFlag(HeadPart.Flag.Female) && !record.Flags.HasFlag(HeadPart.Flag.Male)))
+                allPlayableHeadParts.Add(record);
+
+                bool femaleFlag = record.Flags.HasFlag(HeadPart.Flag.Female);
+                bool maleFlag = record.Flags.HasFlag(HeadPart.Flag.Male);
+
+                if ((femaleFlag && maleFlag) || (!femaleFlag && !maleFlag))
                 {
                     switch (record.Type)
                     {
@@ -68,7 +73,7 @@ namespace FO4FalloutGeneticsPatch
                             break;
                     }
                 }
-                else if (record.Flags.HasFlag(HeadPart.Flag.Female))
+                else if (femaleFlag)
                 {
                     switch (record.Type)
                     {
@@ -86,7 +91,7 @@ namespace FO4FalloutGeneticsPatch
                             break;
                     }
                 }
-                else if (record.Flags.HasFlag(HeadPart.Flag.Male))
+                else if (maleFlag)
                 {
                     switch (record.Type)
                     {
@@ -108,6 +113,13 @@ namespace FO4FalloutGeneticsPatch
                     }
                 }
             }
+
+            Console.WriteLine(
+                $"Neutral headparts:\n\tEyes - {neutral.Eyes.Count}\n\tHair - {neutral.Hair.Count}\n\tEyebrows - {neutral.Brows.Count}\n\tScars - {neutral.Scar.Count}\n\tFacial Hair - {neutral.FacialHair.Count}");
+            Console.WriteLine(
+                $"Female headparts:\n\tEyes - {female.Eyes.Count}\n\tHair - {female.Hair.Count}\n\tEyebrows - {female.Brows.Count}\n\tScars - {female.Scar.Count}");
+            Console.WriteLine(
+                $"Male headparts:\n\tEyes - {male.Eyes.Count}\n\tHair - {male.Hair.Count}\n\tEyebrows - {male.Brows.Count}\n\tScars - {male.Scar.Count}\n\tFacial Hair - {male.FacialHair.Count}");
 
             male.Eyes.AddRange(neutral.Eyes);
             male.Hair.AddRange(neutral.Hair);
@@ -140,13 +152,18 @@ namespace FO4FalloutGeneticsPatch
             foreach (var file in Directory.EnumerateFiles(presetPath, "*.json", SearchOption.TopDirectoryOnly))
             {
                 var preset = JsonConvert.DeserializeObject<Preset>(File.ReadAllText(file));
-                if (preset.Morphs.Values is null) preset.Morphs.Values = new List<double> { 0, 0, 0, 0, 0 };
+                if (preset?.Morphs?.Values is null && preset is not null)
+                    preset.Morphs.Values = new List<double> { 0, 0, 0, 0, 0 };
+
+                if (preset is null) continue;
 
                 if (preset.Gender == 1)
                     female.Presets.Add(preset);
                 else
                     male.Presets.Add(preset);
             }
+
+            Console.WriteLine($"Found {female.Presets.Count} female presets and {male.Presets.Count} male presets.");
 
             foreach (var npcContext in state.LoadOrder.PriorityOrder.Npc().WinningContextOverrides())
             {
@@ -156,11 +173,11 @@ namespace FO4FalloutGeneticsPatch
                 if (record.Race.IsNull || !record.Race.FormKey.Equals(Fallout4.Race.HumanRace.FormKey)) continue;
 
                 var newRecord = npcContext.GetOrAddAsOverride(state.PatchMod);
-
                 newRecord.HeadParts.Clear();
 
                 var partSet = new HashSet<FormKey>();
                 var presets = new List<Preset>();
+
                 bool useFemaleParts =
                     (record.Flags.HasFlag(Npc.Flag.Female) && Settings.FemaleParts == PartGenderType.Female) ||
                     (!record.Flags.HasFlag(Npc.Flag.Female) && Settings.MaleParts == PartGenderType.Female);
@@ -169,10 +186,10 @@ namespace FO4FalloutGeneticsPatch
                 {
                     AddParts(partSet, female.DefaultPreset);
 
-                    AddRandomPart(partSet, female.Eyes, random, state);
-                    AddRandomHairWithExtras(partSet, female.Hair, random, state);
-                    AddRandomPart(partSet, female.Brows, random, state);
-                    AddRandomPart(partSet, female.Scar, random, state);
+                    AddRandomSimplePart(partSet, female.Eyes, random);
+                    AddRandomBundledPart(partSet, female.Hair, random, state, allPlayableHeadParts, true, includePrefixFamily: true);
+                    AddRandomSimplePart(partSet, female.Brows, random);
+                    AddRandomSimplePart(partSet, female.Scar, random);
 
                     presets = female.Presets;
                 }
@@ -180,14 +197,14 @@ namespace FO4FalloutGeneticsPatch
                 {
                     AddParts(partSet, male.DefaultPreset);
 
-                    AddRandomPart(partSet, male.Eyes, random, state);
-                    AddRandomHairWithExtras(partSet, male.Hair, random, state);
-                    AddRandomPart(partSet, male.Brows, random, state);
-                    AddRandomPart(partSet, male.Scar, random, state);
+                    AddRandomSimplePart(partSet, male.Eyes, random);
+                    AddRandomBundledPart(partSet, male.Hair, random, state, allPlayableHeadParts, false, includePrefixFamily: true);
+                    AddRandomSimplePart(partSet, male.Brows, random);
+                    AddRandomSimplePart(partSet, male.Scar, random);
 
                     if (random.Next(1, 6) < 3)
                     {
-                        AddRandomPart(partSet, male.FacialHair, random, state);
+                        AddRandomBundledPart(partSet, male.FacialHair, random, state, allPlayableHeadParts, false, includePrefixFamily: true);
                     }
 
                     presets = male.Presets;
@@ -206,30 +223,6 @@ namespace FO4FalloutGeneticsPatch
             }
         }
 
-        private static void AddRandomPart(
-            HashSet<FormKey> target,
-            List<IHeadPartGetter> source,
-            Random random,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
-        {
-            if (source.Count == 0) return;
-
-            var chosen = source[random.Next(source.Count)];
-            AddHeadPartAndExtras(target, chosen.FormKey, state);
-        }
-
-        private static void AddRandomHairWithExtras(
-            HashSet<FormKey> target,
-            List<IHeadPartGetter> hairPool,
-            Random random,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
-        {
-            if (hairPool.Count == 0) return;
-
-            var chosenHair = hairPool[random.Next(hairPool.Count)];
-            AddHeadPartAndExtras(target, chosenHair.FormKey, state);
-        }
-
         private static void AddParts(HashSet<FormKey> target, IEnumerable<FormKey> parts)
         {
             foreach (var part in parts)
@@ -238,38 +231,122 @@ namespace FO4FalloutGeneticsPatch
             }
         }
 
-        private static void AddHeadPartAndExtras(
+        private static void AddRandomSimplePart(
             HashSet<FormKey> target,
-            FormKey headPartKey,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
+            List<IHeadPartGetter> source,
+            Random random)
         {
-            AddHeadPartAndExtrasRecursive(target, headPartKey, state, new HashSet<FormKey>());
+            if (source.Count == 0) return;
+
+            var chosen = source[random.Next(source.Count)];
+            if (chosen is null) return;
+
+            target.Add(chosen.FormKey);
         }
 
-        private static void AddHeadPartAndExtrasRecursive(
+        private static void AddRandomBundledPart(
             HashSet<FormKey> target,
-            FormKey headPartKey,
+            List<IHeadPartGetter> source,
+            Random random,
+            IPatcherState<IFallout4Mod, IFallout4ModGetter> state,
+            IEnumerable<IHeadPartGetter> allPlayableHeadParts,
+            bool isFemale,
+            bool includePrefixFamily)
+        {
+            if (source.Count == 0) return;
+
+            var chosen = source[random.Next(source.Count)];
+            if (chosen is null) return;
+
+            AddHeadPartBundle(target, chosen, state, allPlayableHeadParts, isFemale, includePrefixFamily);
+        }
+
+        private static void AddHeadPartBundle(
+            HashSet<FormKey> target,
+            IHeadPartGetter chosen,
+            IPatcherState<IFallout4Mod, IFallout4ModGetter> state,
+            IEnumerable<IHeadPartGetter> allPlayableHeadParts,
+            bool isFemale,
+            bool includePrefixFamily)
+        {
+            AddExtraPartsRecursive(target, chosen, state);
+
+            if (includePrefixFamily)
+            {
+                AddHeadPartsWithSamePrefix(target, chosen, allPlayableHeadParts, isFemale, state);
+            }
+        }
+
+        private static void AddHeadPartsWithSamePrefix(
+            HashSet<FormKey> target,
+            IHeadPartGetter chosen,
+            IEnumerable<IHeadPartGetter> candidates,
+            bool isFemale,
+            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
+        {
+            var editorId = chosen.EditorID ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(editorId)) return;
+
+            int underscoreIndex = editorId.IndexOf('_');
+            if (underscoreIndex <= 0) return;
+
+            var prefix = editorId.Substring(0, underscoreIndex + 1);
+
+            foreach (var part in candidates)
+            {
+                if (part is null) continue;
+                if (part.FormKey == chosen.FormKey) continue;
+                if (string.IsNullOrWhiteSpace(part.EditorID)) continue;
+                if (!part.EditorID.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!GenderMatches(part, isFemale)) continue;
+                if (part.Type != chosen.Type) continue;
+
+                AddExtraPartsRecursive(target, part, state);
+            }
+        }
+
+        private static bool GenderMatches(IHeadPartGetter part, bool isFemale)
+        {
+            bool femaleFlag = part.Flags.HasFlag(HeadPart.Flag.Female);
+            bool maleFlag = part.Flags.HasFlag(HeadPart.Flag.Male);
+
+            if ((femaleFlag && maleFlag) || (!femaleFlag && !maleFlag))
+                return true;
+
+            if (isFemale && femaleFlag) return true;
+            if (!isFemale && maleFlag) return true;
+
+            return false;
+        }
+
+        private static void AddExtraPartsRecursive(
+            HashSet<FormKey> target,
+            IHeadPartGetter headPart,
+            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
+        {
+            var visited = new HashSet<FormKey>();
+            AddExtraPartsRecursiveInner(target, headPart, state, visited);
+        }
+
+        private static void AddExtraPartsRecursiveInner(
+            HashSet<FormKey> target,
+            IHeadPartGetter headPart,
             IPatcherState<IFallout4Mod, IFallout4ModGetter> state,
             HashSet<FormKey> visited)
         {
-            if (!visited.Add(headPartKey))
-                return;
+            if (headPart is null) return;
+            if (!visited.Add(headPart.FormKey)) return;
 
-            target.Add(headPartKey);
+            target.Add(headPart.FormKey);
 
-            if (!state.LinkCache.TryResolve<IHeadPartGetter>(headPartKey, out var headPart))
-                return;
-
-            // In Mutagen this field is typically exposed as ExtraParts for FO4 head parts.
-            // If your installed Mutagen version uses a slightly different property name,
-            // update this block to match that generated API.
-            if (headPart.ExtraParts is null)
-                return;
+            if (headPart.ExtraParts is null) return;
 
             foreach (var extra in headPart.ExtraParts)
             {
                 if (extra.IsNull) continue;
-                AddHeadPartAndExtrasRecursive(target, extra.FormKey, state, visited);
+                if (!state.LinkCache.TryResolve<IHeadPartGetter>(extra.FormKey, out var resolved)) continue;
+
+                AddExtraPartsRecursiveInner(target, resolved, state, visited);
             }
         }
 
@@ -289,7 +366,8 @@ namespace FO4FalloutGeneticsPatch
         private static List<double> Combine(List<double> a, List<double> b, double t)
         {
             var c = new List<double>();
-            for (var i = 0; i < Math.Min(a.Count, b.Count); i++) c.Add(t * a[i] + (1 - t) * b[i]);
+            for (var i = 0; i < Math.Min(a.Count, b.Count); i++)
+                c.Add(t * a[i] + (1 - t) * b[i]);
             return c;
         }
 
@@ -299,6 +377,7 @@ namespace FO4FalloutGeneticsPatch
             double t)
         {
             var child = new Dictionary<string, List<double>>();
+
             foreach (var i in x.Keys)
             {
                 var yi = new List<double> { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
@@ -322,6 +401,7 @@ namespace FO4FalloutGeneticsPatch
             double t)
         {
             var child = new Dictionary<string, double>();
+
             foreach (var i in x.Keys)
             {
                 var yi = 0.0;
@@ -341,6 +421,7 @@ namespace FO4FalloutGeneticsPatch
         private static void Morph(INpc r, PresetMorph p)
         {
             r.FaceMorphs.Clear();
+
             var reg = p.Regions;
             foreach (var pt in reg.Keys)
             {
@@ -375,6 +456,7 @@ namespace FO4FalloutGeneticsPatch
                 LowerTorso = (float)bm[3],
                 Legs = (float)bm[4]
             };
+
             r.FacialMorphIntensity = null;
         }
     }
