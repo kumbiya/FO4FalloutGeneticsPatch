@@ -59,7 +59,8 @@ namespace FO4FalloutGeneticsPatch
                             neutral.Hair.Add(record);
                             break;
                         case HeadPart.TypeEnum.FacialHair:
-                            neutral.FacialHair.Add(record);
+                            if (IsLikelyTopLevelFacialHair(record))
+                                neutral.FacialHair.Add(record);
                             break;
                         case HeadPart.TypeEnum.Scars:
                             neutral.Scar.Add(record);
@@ -98,7 +99,8 @@ namespace FO4FalloutGeneticsPatch
                             male.Hair.Add(record);
                             break;
                         case HeadPart.TypeEnum.FacialHair:
-                            male.FacialHair.Add(record);
+                            if (IsLikelyTopLevelFacialHair(record))
+                                male.FacialHair.Add(record);
                             break;
                         case HeadPart.TypeEnum.Scars:
                             male.Scar.Add(record);
@@ -183,7 +185,7 @@ namespace FO4FalloutGeneticsPatch
                     AddParts(partSet, female.DefaultPreset);
 
                     AddRandomSimplePart(partSet, female.Eyes, random);
-                    AddRandomBundledPart(partSet, female.Hair, random, state);
+                    AddRandomBundledPartDirectOnlySameMod(partSet, female.Hair, random, state);
                     AddRandomSimplePart(partSet, female.Brows, random);
                     AddRandomSimplePart(partSet, female.Scar, random);
 
@@ -194,12 +196,12 @@ namespace FO4FalloutGeneticsPatch
                     AddParts(partSet, male.DefaultPreset);
 
                     AddRandomSimplePart(partSet, male.Eyes, random);
-                    AddRandomBundledPart(partSet, male.Hair, random, state);
+                    AddRandomBundledPartDirectOnlySameMod(partSet, male.Hair, random, state);
                     AddRandomSimplePart(partSet, male.Brows, random);
                     AddRandomSimplePart(partSet, male.Scar, random);
 
-                    // Always assign facial hair if there are any facial-hair records available
-                    AddRandomBundledPart(partSet, male.FacialHair, random, state);
+                    // Always assign a top-level facial-hair bundle if available
+                    AddRandomBundledPartDirectOnlySameMod(partSet, male.FacialHair, random, state);
 
                     presets = male.Presets;
                 }
@@ -238,7 +240,7 @@ namespace FO4FalloutGeneticsPatch
             target.Add(chosen.FormKey);
         }
 
-        private static void AddRandomBundledPart(
+        private static void AddRandomBundledPartDirectOnlySameMod(
             HashSet<FormKey> target,
             List<IHeadPartGetter> source,
             Random random,
@@ -249,53 +251,45 @@ namespace FO4FalloutGeneticsPatch
             var chosen = source[random.Next(source.Count)];
             if (chosen is null) return;
 
-            AddHeadPartBundle(target, chosen, state);
+            AddHeadPartDirectBundleSameMod(target, chosen, state);
         }
 
-        private static void AddHeadPartBundle(
+        private static void AddHeadPartDirectBundleSameMod(
             HashSet<FormKey> target,
             IHeadPartGetter chosen,
             IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
         {
-            AddExtraPartsRecursive(target, chosen, state, chosen.FormKey.ModKey);
-        }
+            var parentMod = chosen.FormKey.ModKey;
 
-        private static void AddExtraPartsRecursive(
-            HashSet<FormKey> target,
-            IHeadPartGetter headPart,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state,
-            ModKey sourceMod)
-        {
-            var visited = new HashSet<FormKey>();
-            AddExtraPartsRecursiveInner(target, headPart, state, visited, sourceMod);
-        }
+            target.Add(chosen.FormKey);
 
-        private static void AddExtraPartsRecursiveInner(
-            HashSet<FormKey> target,
-            IHeadPartGetter headPart,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state,
-            HashSet<FormKey> visited,
-            ModKey sourceMod)
-        {
-            if (headPart is null) return;
-            if (!visited.Add(headPart.FormKey)) return;
+            if (chosen.ExtraParts is null) return;
 
-            // Only allow bundled parts from the same plugin as the selected hair/beard
-            if (!headPart.FormKey.ModKey.Equals(sourceMod))
-                return;
-
-            target.Add(headPart.FormKey);
-
-            if (headPart.ExtraParts is null) return;
-
-            foreach (var extra in headPart.ExtraParts)
+            foreach (var extra in chosen.ExtraParts)
             {
                 if (extra.IsNull) continue;
-                if (!extra.FormKey.ModKey.Equals(sourceMod)) continue;
-                if (!state.LinkCache.TryResolve<IHeadPartGetter>(extra.FormKey, out var resolved)) continue;
+                if (!extra.FormKey.ModKey.Equals(parentMod)) continue;
 
-                AddExtraPartsRecursiveInner(target, resolved, state, visited, sourceMod);
+                if (!state.LinkCache.TryResolve<IHeadPartGetter>(extra.FormKey, out var resolved))
+                    continue;
+                if (resolved is null) continue;
+                if (resolved.IsDeleted) continue;
+                if (!resolved.FormKey.ModKey.Equals(parentMod)) continue;
+
+                target.Add(resolved.FormKey);
             }
+        }
+
+        private static bool IsLikelyTopLevelFacialHair(IHeadPartGetter part)
+        {
+            if (part.Type != HeadPart.TypeEnum.FacialHair) return false;
+
+            var edid = part.EditorID ?? string.Empty;
+
+            if (edid.StartsWith("Part", StringComparison.OrdinalIgnoreCase)) return false;
+            if (edid.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
+
+            return true;
         }
 
         private static PresetMorph Genetics(PresetMorph p1, PresetMorph p2, double t)
