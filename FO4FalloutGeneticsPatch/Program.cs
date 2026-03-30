@@ -6,7 +6,6 @@ using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.FormKeys.Fallout4;
 using Mutagen.Bethesda.Plugins;
-using Mutagen.Bethesda.Plugins.Cache;
 using Mutagen.Bethesda.Synthesis;
 using Newtonsoft.Json;
 using Noggog;
@@ -46,10 +45,8 @@ namespace FO4FalloutGeneticsPatch
                     !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHumanGhouls.FormKey))
                     continue;
 
-                bool femaleFlag = record.Flags.HasFlag(HeadPart.Flag.Female);
-                bool maleFlag = record.Flags.HasFlag(HeadPart.Flag.Male);
-
-                if ((femaleFlag && maleFlag) || (!femaleFlag && !maleFlag))
+                if ((record.Flags.HasFlag(HeadPart.Flag.Female) && record.Flags.HasFlag(HeadPart.Flag.Male)) ||
+                    (!record.Flags.HasFlag(HeadPart.Flag.Female) && !record.Flags.HasFlag(HeadPart.Flag.Male)))
                 {
                     switch (record.Type)
                     {
@@ -71,7 +68,7 @@ namespace FO4FalloutGeneticsPatch
                             break;
                     }
                 }
-                else if (femaleFlag)
+                else if (record.Flags.HasFlag(HeadPart.Flag.Female))
                 {
                     switch (record.Type)
                     {
@@ -89,7 +86,7 @@ namespace FO4FalloutGeneticsPatch
                             break;
                     }
                 }
-                else if (maleFlag)
+                else if (record.Flags.HasFlag(HeadPart.Flag.Male))
                 {
                     switch (record.Type)
                     {
@@ -151,10 +148,7 @@ namespace FO4FalloutGeneticsPatch
             foreach (var file in Directory.EnumerateFiles(presetPath, "*.json", SearchOption.TopDirectoryOnly))
             {
                 var preset = JsonConvert.DeserializeObject<Preset>(File.ReadAllText(file));
-                if (preset?.Morphs?.Values is null && preset is not null)
-                    preset.Morphs.Values = new List<double> { 0, 0, 0, 0, 0 };
-
-                if (preset is null) continue;
+                if (preset.Morphs.Values is null) preset.Morphs.Values = new List<double> { 0, 0, 0, 0, 0 };
 
                 if (preset.Gender == 1)
                     female.Presets.Add(preset);
@@ -173,36 +167,35 @@ namespace FO4FalloutGeneticsPatch
 
                 var newRecord = npcContext.GetOrAddAsOverride(state.PatchMod);
 
-                var finalParts = GetPreservedExistingNonGeneratedParts(record, state.LinkCache);
-
+                newRecord.HeadParts.Clear();
+                var parts = new List<FormKey>();
                 var presets = new List<Preset>();
 
-                bool useFemaleParts =
-                    (record.Flags.HasFlag(Npc.Flag.Female) && Settings.FemaleParts == PartGenderType.Female) ||
-                    (!record.Flags.HasFlag(Npc.Flag.Female) && Settings.MaleParts == PartGenderType.Female);
-
-                if (useFemaleParts)
+                if ((record.Flags.HasFlag(Npc.Flag.Female) && Settings.FemaleParts == PartGenderType.Female) ||
+                    (!record.Flags.HasFlag(Npc.Flag.Female) && Settings.MaleParts == PartGenderType.Female))
                 {
-                    AddMissingDefaults(finalParts, female.DefaultPreset);
-                    AddRandomSimplePart(finalParts, female.Eyes, random);
-                    AddRandomBundledPartDirectOnlySameMod(finalParts, female.Hair, random);
-                    AddRandomSimplePart(finalParts, female.Brows, random);
-                    AddRandomSimplePart(finalParts, female.Scar, random);
+                    parts.AddRange(female.DefaultPreset);
+                    AddRandomSimplePart(parts, female.Eyes, random);
+                    AddRandomBundledPartDirectOnly(parts, female.Hair, random);
+                    AddRandomSimplePart(parts, female.Brows, random);
+                    AddRandomSimplePart(parts, female.Scar, random);
                     presets = female.Presets;
                 }
                 else
                 {
-                    AddMissingDefaults(finalParts, male.DefaultPreset);
-                    AddRandomSimplePart(finalParts, male.Eyes, random);
-                    AddRandomBundledPartDirectOnlySameMod(finalParts, male.Hair, random);
-                    AddRandomSimplePart(finalParts, male.Brows, random);
-                    AddRandomSimplePart(finalParts, male.Scar, random);
-                    AddRandomBundledPartDirectOnlySameMod(finalParts, male.FacialHair, random);
+                    parts.AddRange(male.DefaultPreset);
+                    AddRandomSimplePart(parts, male.Eyes, random);
+                    AddRandomBundledPartDirectOnly(parts, male.Hair, random);
+                    AddRandomSimplePart(parts, male.Brows, random);
+                    AddRandomSimplePart(parts, male.Scar, random);
+
+                    // Always assign facial hair if available
+                    AddRandomBundledPartDirectOnly(parts, male.FacialHair, random);
+
                     presets = male.Presets;
                 }
 
-                newRecord.HeadParts.Clear();
-                newRecord.HeadParts.AddRange(finalParts);
+                newRecord.HeadParts.AddRange(parts);
 
                 if (Settings.UseMorphs && presets.Count > 0)
                 {
@@ -212,46 +205,6 @@ namespace FO4FalloutGeneticsPatch
                     var child = Genetics(p1.Morphs, p2.Morphs, random.NextDouble());
                     Morph(newRecord, child);
                 }
-            }
-        }
-
-        private static List<FormKey> GetPreservedExistingNonGeneratedParts(
-            INpcGetter npc,
-            ILinkCache<IFallout4Mod, IFallout4ModGetter> linkCache)
-        {
-            var result = new List<FormKey>();
-            if (npc.HeadParts is null) return result;
-
-            foreach (var hp in npc.HeadParts)
-            {
-                if (hp.IsNull) continue;
-
-                if (!linkCache.TryResolve<IHeadPartGetter>(hp.FormKey, out var resolved) || resolved is null)
-                {
-                    AddUnique(result, hp.FormKey);
-                    continue;
-                }
-
-                if (resolved.Type == HeadPart.TypeEnum.Eyes ||
-                    resolved.Type == HeadPart.TypeEnum.Hair ||
-                    resolved.Type == HeadPart.TypeEnum.FacialHair ||
-                    resolved.Type == HeadPart.TypeEnum.Eyebrows ||
-                    resolved.Type == HeadPart.TypeEnum.Scars)
-                {
-                    continue;
-                }
-
-                AddUnique(result, hp.FormKey);
-            }
-
-            return result;
-        }
-
-        private static void AddMissingDefaults(List<FormKey> target, IEnumerable<FormKey> defaults)
-        {
-            foreach (var fk in defaults)
-            {
-                AddUnique(target, fk);
             }
         }
 
@@ -265,10 +218,10 @@ namespace FO4FalloutGeneticsPatch
             var chosen = source[random.Next(source.Count)];
             if (chosen is null) return;
 
-            AddUnique(target, chosen.FormKey);
+            target.Add(chosen.FormKey);
         }
 
-        private static void AddRandomBundledPartDirectOnlySameMod(
+        private static void AddRandomBundledPartDirectOnly(
             List<FormKey> target,
             List<IHeadPartGetter> source,
             Random random)
@@ -278,15 +231,13 @@ namespace FO4FalloutGeneticsPatch
             var chosen = source[random.Next(source.Count)];
             if (chosen is null) return;
 
-            AddHeadPartDirectBundleSameMod(target, chosen);
+            AddDirectBundle(target, chosen);
         }
 
-        private static void AddHeadPartDirectBundleSameMod(
+        private static void AddDirectBundle(
             List<FormKey> target,
             IHeadPartGetter chosen)
         {
-            var parentMod = chosen.FormKey.ModKey;
-
             AddUnique(target, chosen.FormKey);
 
             if (chosen.ExtraParts is null) return;
@@ -294,8 +245,9 @@ namespace FO4FalloutGeneticsPatch
             foreach (var extra in chosen.ExtraParts)
             {
                 if (extra.IsNull) continue;
-                if (!extra.FormKey.ModKey.Equals(parentMod)) continue;
 
+                // Use only the parent record's direct ExtraParts.
+                // No recursion, no same-plugin filter, no prefix expansion.
                 AddUnique(target, extra.FormKey);
             }
         }
@@ -342,15 +294,13 @@ namespace FO4FalloutGeneticsPatch
         private static List<double> Combine(List<double> a, List<double> b, double t)
         {
             var c = new List<double>();
-            for (var i = 0; i < Math.Min(a.Count, b.Count); i++)
-                c.Add(t * a[i] + (1 - t) * b[i]);
+            for (var i = 0; i < Math.Min(a.Count, b.Count); i++) c.Add(t * a[i] + (1 - t) * b[i]);
             return c;
         }
 
         private static Dictionary<string, List<double>> ConvolveRegions(
             Dictionary<string, List<double>> x,
-            Dictionary<string, List<double>> y,
-            double t)
+            Dictionary<string, List<double>> y, double t)
         {
             var child = new Dictionary<string, List<double>>();
             foreach (var i in x.Keys)
@@ -372,8 +322,7 @@ namespace FO4FalloutGeneticsPatch
 
         private static Dictionary<string, double> ConvolvePresets(
             Dictionary<string, double> x,
-            Dictionary<string, double> y,
-            double t)
+            Dictionary<string, double> y, double t)
         {
             var child = new Dictionary<string, double>();
             foreach (var i in x.Keys)
