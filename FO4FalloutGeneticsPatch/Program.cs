@@ -173,34 +173,36 @@ namespace FO4FalloutGeneticsPatch
 
                 var newRecord = npcContext.GetOrAddAsOverride(state.PatchMod);
 
-                EnsureHeadPartsListExists(newRecord);
-                RemoveGeneratedHeadPartsInPlace(newRecord, state.LinkCache);
+                var finalParts = GetPreservedExistingNonGeneratedParts(record, state.LinkCache);
+
+                var presets = new List<Preset>();
 
                 bool useFemaleParts =
                     (record.Flags.HasFlag(Npc.Flag.Female) && Settings.FemaleParts == PartGenderType.Female) ||
                     (!record.Flags.HasFlag(Npc.Flag.Female) && Settings.MaleParts == PartGenderType.Female);
 
-                var presets = new List<Preset>();
-
                 if (useFemaleParts)
                 {
-                    AddMissingDefaultsInPlace(newRecord, female.DefaultPreset);
-                    AddRandomSimplePartInPlace(newRecord, female.Eyes, random);
-                    AddRandomBundledPartDirectOnlySameModInPlace(newRecord, female.Hair, random);
-                    AddRandomSimplePartInPlace(newRecord, female.Brows, random);
-                    AddRandomSimplePartInPlace(newRecord, female.Scar, random);
+                    AddMissingDefaults(finalParts, female.DefaultPreset);
+                    AddRandomSimplePart(finalParts, female.Eyes, random);
+                    AddRandomBundledPartDirectOnlySameMod(finalParts, female.Hair, random);
+                    AddRandomSimplePart(finalParts, female.Brows, random);
+                    AddRandomSimplePart(finalParts, female.Scar, random);
                     presets = female.Presets;
                 }
                 else
                 {
-                    AddMissingDefaultsInPlace(newRecord, male.DefaultPreset);
-                    AddRandomSimplePartInPlace(newRecord, male.Eyes, random);
-                    AddRandomBundledPartDirectOnlySameModInPlace(newRecord, male.Hair, random);
-                    AddRandomSimplePartInPlace(newRecord, male.Brows, random);
-                    AddRandomSimplePartInPlace(newRecord, male.Scar, random);
-                    AddRandomBundledPartDirectOnlySameModInPlace(newRecord, male.FacialHair, random);
+                    AddMissingDefaults(finalParts, male.DefaultPreset);
+                    AddRandomSimplePart(finalParts, male.Eyes, random);
+                    AddRandomBundledPartDirectOnlySameMod(finalParts, male.Hair, random);
+                    AddRandomSimplePart(finalParts, male.Brows, random);
+                    AddRandomSimplePart(finalParts, male.Scar, random);
+                    AddRandomBundledPartDirectOnlySameMod(finalParts, male.FacialHair, random);
                     presets = male.Presets;
                 }
+
+                newRecord.HeadParts.Clear();
+                newRecord.HeadParts.AddRange(finalParts);
 
                 if (Settings.UseMorphs && presets.Count > 0)
                 {
@@ -213,24 +215,22 @@ namespace FO4FalloutGeneticsPatch
             }
         }
 
-        private static void EnsureHeadPartsListExists(INpc npc)
-        {
-            npc.HeadParts ??= new ExtendedList<IFormLinkGetter<IHeadPartGetter>>();
-        }
-
-        private static void RemoveGeneratedHeadPartsInPlace(
-            INpc npc,
+        private static List<FormKey> GetPreservedExistingNonGeneratedParts(
+            INpcGetter npc,
             ILinkCache<IFallout4Mod, IFallout4ModGetter> linkCache)
         {
-            if (npc.HeadParts is null) return;
+            var result = new List<FormKey>();
+            if (npc.HeadParts is null) return result;
 
-            for (int i = npc.HeadParts.Count - 1; i >= 0; i--)
+            foreach (var hp in npc.HeadParts)
             {
-                var hp = npc.HeadParts[i];
                 if (hp.IsNull) continue;
 
                 if (!linkCache.TryResolve<IHeadPartGetter>(hp.FormKey, out var resolved) || resolved is null)
+                {
+                    AddUnique(result, hp.FormKey);
                     continue;
+                }
 
                 if (resolved.Type == HeadPart.TypeEnum.Eyes ||
                     resolved.Type == HeadPart.TypeEnum.Hair ||
@@ -238,21 +238,25 @@ namespace FO4FalloutGeneticsPatch
                     resolved.Type == HeadPart.TypeEnum.Eyebrows ||
                     resolved.Type == HeadPart.TypeEnum.Scars)
                 {
-                    npc.HeadParts.RemoveAt(i);
+                    continue;
                 }
+
+                AddUnique(result, hp.FormKey);
             }
+
+            return result;
         }
 
-        private static void AddMissingDefaultsInPlace(INpc npc, IEnumerable<FormKey> defaults)
+        private static void AddMissingDefaults(List<FormKey> target, IEnumerable<FormKey> defaults)
         {
             foreach (var fk in defaults)
             {
-                AddUniqueInPlace(npc, fk);
+                AddUnique(target, fk);
             }
         }
 
-        private static void AddRandomSimplePartInPlace(
-            INpc npc,
+        private static void AddRandomSimplePart(
+            List<FormKey> target,
             List<IHeadPartGetter> source,
             Random random)
         {
@@ -261,11 +265,11 @@ namespace FO4FalloutGeneticsPatch
             var chosen = source[random.Next(source.Count)];
             if (chosen is null) return;
 
-            AddUniqueInPlace(npc, chosen.FormKey);
+            AddUnique(target, chosen.FormKey);
         }
 
-        private static void AddRandomBundledPartDirectOnlySameModInPlace(
-            INpc npc,
+        private static void AddRandomBundledPartDirectOnlySameMod(
+            List<FormKey> target,
             List<IHeadPartGetter> source,
             Random random)
         {
@@ -274,16 +278,16 @@ namespace FO4FalloutGeneticsPatch
             var chosen = source[random.Next(source.Count)];
             if (chosen is null) return;
 
-            AddHeadPartDirectBundleSameModInPlace(npc, chosen);
+            AddHeadPartDirectBundleSameMod(target, chosen);
         }
 
-        private static void AddHeadPartDirectBundleSameModInPlace(
-            INpc npc,
+        private static void AddHeadPartDirectBundleSameMod(
+            List<FormKey> target,
             IHeadPartGetter chosen)
         {
             var parentMod = chosen.FormKey.ModKey;
 
-            AddUniqueInPlace(npc, chosen.FormKey);
+            AddUnique(target, chosen.FormKey);
 
             if (chosen.ExtraParts is null) return;
 
@@ -292,22 +296,19 @@ namespace FO4FalloutGeneticsPatch
                 if (extra.IsNull) continue;
                 if (!extra.FormKey.ModKey.Equals(parentMod)) continue;
 
-                AddUniqueInPlace(npc, extra.FormKey);
+                AddUnique(target, extra.FormKey);
             }
         }
 
-        private static void AddUniqueInPlace(INpc npc, FormKey fk)
+        private static void AddUnique(List<FormKey> target, FormKey fk)
         {
-            if (npc.HeadParts is null)
-                npc.HeadParts = new ExtendedList<IFormLinkGetter<IHeadPartGetter>>();
-
-            foreach (var existing in npc.HeadParts)
+            foreach (var existing in target)
             {
-                if (!existing.IsNull && existing.FormKey.Equals(fk))
+                if (existing.Equals(fk))
                     return;
             }
 
-            npc.HeadParts.Add(fk);
+            target.Add(fk);
         }
 
         private static bool IsLikelyTopLevelFacialHair(IHeadPartGetter part)
