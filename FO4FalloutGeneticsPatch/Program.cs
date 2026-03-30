@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
@@ -172,46 +173,40 @@ namespace FO4FalloutGeneticsPatch
 
                 var newRecord = npcContext.GetOrAddAsOverride(state.PatchMod);
 
-                var partSet = new HashSet<FormKey>();
-
-                // Preserve all existing non-target headparts so base face parts do not disappear.
-                PreserveExistingNonReplacedHeadParts(partSet, record, state);
-
-                var presets = new List<Preset>();
+                var existingParts = CloneExistingHeadParts(record);
+                RemoveGeneratedCategories(existingParts, state);
 
                 bool useFemaleParts =
                     (record.Flags.HasFlag(Npc.Flag.Female) && Settings.FemaleParts == PartGenderType.Female) ||
                     (!record.Flags.HasFlag(Npc.Flag.Female) && Settings.MaleParts == PartGenderType.Female);
 
+                var generatedParts = new List<FormKey>();
+                var presets = new List<Preset>();
+
                 if (useFemaleParts)
                 {
-                    // Keep defaults too, just in case an NPC was missing them.
-                    AddParts(partSet, female.DefaultPreset);
-
-                    AddRandomSimplePart(partSet, female.Eyes, random);
-                    AddRandomBundledPartDirectOnlySameMod(partSet, female.Hair, random);
-                    AddRandomSimplePart(partSet, female.Brows, random);
-                    AddRandomSimplePart(partSet, female.Scar, random);
-
+                    AddMissingDefaults(existingParts, female.DefaultPreset);
+                    AddRandomSimplePart(generatedParts, female.Eyes, random);
+                    AddRandomBundledPartDirectOnlySameMod(generatedParts, female.Hair, random);
+                    AddRandomSimplePart(generatedParts, female.Brows, random);
+                    AddRandomSimplePart(generatedParts, female.Scar, random);
                     presets = female.Presets;
                 }
                 else
                 {
-                    AddParts(partSet, male.DefaultPreset);
-
-                    AddRandomSimplePart(partSet, male.Eyes, random);
-                    AddRandomBundledPartDirectOnlySameMod(partSet, male.Hair, random);
-                    AddRandomSimplePart(partSet, male.Brows, random);
-                    AddRandomSimplePart(partSet, male.Scar, random);
-
-                    // Always assign facial hair if available
-                    AddRandomBundledPartDirectOnlySameMod(partSet, male.FacialHair, random);
-
+                    AddMissingDefaults(existingParts, male.DefaultPreset);
+                    AddRandomSimplePart(generatedParts, male.Eyes, random);
+                    AddRandomBundledPartDirectOnlySameMod(generatedParts, male.Hair, random);
+                    AddRandomSimplePart(generatedParts, male.Brows, random);
+                    AddRandomSimplePart(generatedParts, male.Scar, random);
+                    AddRandomBundledPartDirectOnlySameMod(generatedParts, male.FacialHair, random);
                     presets = male.Presets;
                 }
 
+                var finalParts = MergeUnique(existingParts, generatedParts);
+
                 newRecord.HeadParts.Clear();
-                newRecord.HeadParts.AddRange(partSet);
+                newRecord.HeadParts.AddRange(finalParts);
 
                 if (Settings.UseMorphs && presets.Count > 0)
                 {
@@ -224,54 +219,51 @@ namespace FO4FalloutGeneticsPatch
             }
         }
 
-        private static void PreserveExistingNonReplacedHeadParts(
-            HashSet<FormKey> target,
-            INpcGetter npc,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
+        private static List<FormKey> CloneExistingHeadParts(INpcGetter npc)
         {
-            if (npc.HeadParts is null) return;
+            var result = new List<FormKey>();
+
+            if (npc.HeadParts is null)
+                return result;
 
             foreach (var hp in npc.HeadParts)
             {
-                if (hp.IsNull) continue;
-
-                if (!state.LinkCache.TryResolve<IHeadPartGetter>(hp.FormKey, out var resolved))
-                {
-                    // If it doesn't resolve, preserve it rather than risk deleting a valid part.
-                    target.Add(hp.FormKey);
-                    continue;
-                }
-
-                if (resolved is null)
-                {
-                    target.Add(hp.FormKey);
-                    continue;
-                }
-
-                // These are the categories we intentionally regenerate.
-                if (resolved.Type == HeadPart.TypeEnum.Eyes ||
-                    resolved.Type == HeadPart.TypeEnum.Hair ||
-                    resolved.Type == HeadPart.TypeEnum.FacialHair ||
-                    resolved.Type == HeadPart.TypeEnum.Eyebrows ||
-                    resolved.Type == HeadPart.TypeEnum.Scars)
-                {
-                    continue;
-                }
-
-                target.Add(hp.FormKey);
+                if (!hp.IsNull)
+                    result.Add(hp.FormKey);
             }
+
+            return result;
         }
 
-        private static void AddParts(HashSet<FormKey> target, IEnumerable<FormKey> parts)
+        private static void RemoveGeneratedCategories(
+            List<FormKey> parts,
+            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
         {
-            foreach (var part in parts)
+            parts.RemoveAll(formKey =>
             {
-                target.Add(part);
+                if (!state.LinkCache.TryResolve<IHeadPartGetter>(formKey, out var resolved) || resolved is null)
+                    return false;
+
+                return resolved.Type == HeadPart.TypeEnum.Eyes
+                    || resolved.Type == HeadPart.TypeEnum.Hair
+                    || resolved.Type == HeadPart.TypeEnum.FacialHair
+                    || resolved.Type == HeadPart.TypeEnum.Eyebrows
+                    || resolved.Type == HeadPart.TypeEnum.Scars;
+            });
+        }
+
+        private static void AddMissingDefaults(List<FormKey> existingParts, IEnumerable<FormKey> defaults)
+        {
+            var seen = new HashSet<FormKey>(existingParts);
+            foreach (var fk in defaults)
+            {
+                if (seen.Add(fk))
+                    existingParts.Add(fk);
             }
         }
 
         private static void AddRandomSimplePart(
-            HashSet<FormKey> target,
+            List<FormKey> target,
             List<IHeadPartGetter> source,
             Random random)
         {
@@ -284,7 +276,7 @@ namespace FO4FalloutGeneticsPatch
         }
 
         private static void AddRandomBundledPartDirectOnlySameMod(
-            HashSet<FormKey> target,
+            List<FormKey> target,
             List<IHeadPartGetter> source,
             Random random)
         {
@@ -297,7 +289,7 @@ namespace FO4FalloutGeneticsPatch
         }
 
         private static void AddHeadPartDirectBundleSameMod(
-            HashSet<FormKey> target,
+            List<FormKey> target,
             IHeadPartGetter chosen)
         {
             var parentMod = chosen.FormKey.ModKey;
@@ -313,6 +305,26 @@ namespace FO4FalloutGeneticsPatch
 
                 target.Add(extra.FormKey);
             }
+        }
+
+        private static List<FormKey> MergeUnique(List<FormKey> first, List<FormKey> second)
+        {
+            var result = new List<FormKey>();
+            var seen = new HashSet<FormKey>();
+
+            foreach (var fk in first)
+            {
+                if (seen.Add(fk))
+                    result.Add(fk);
+            }
+
+            foreach (var fk in second)
+            {
+                if (seen.Add(fk))
+                    result.Add(fk);
+            }
+
+            return result;
         }
 
         private static bool IsLikelyTopLevelFacialHair(IHeadPartGetter part)
@@ -353,7 +365,8 @@ namespace FO4FalloutGeneticsPatch
 
         private static Dictionary<string, List<double>> ConvolveRegions(
             Dictionary<string, List<double>> x,
-            Dictionary<string, List<double>> y, double t)
+            Dictionary<string, List<double>> y,
+            double t)
         {
             var child = new Dictionary<string, List<double>>();
             foreach (var i in x.Keys)
@@ -375,7 +388,8 @@ namespace FO4FalloutGeneticsPatch
 
         private static Dictionary<string, double> ConvolvePresets(
             Dictionary<string, double> x,
-            Dictionary<string, double> y, double t)
+            Dictionary<string, double> y,
+            double t)
         {
             var child = new Dictionary<string, double>();
             foreach (var i in x.Keys)
