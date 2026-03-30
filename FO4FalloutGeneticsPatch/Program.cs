@@ -56,7 +56,8 @@ namespace FO4FalloutGeneticsPatch
                             neutral.Eyes.Add(record);
                             break;
                         case HeadPart.TypeEnum.Hair:
-                            neutral.Hair.Add(record);
+                            if (IsLikelyTopLevelHair(record))
+                                neutral.Hair.Add(record);
                             break;
                         case HeadPart.TypeEnum.FacialHair:
                             if (IsLikelyTopLevelFacialHair(record))
@@ -78,7 +79,8 @@ namespace FO4FalloutGeneticsPatch
                             female.Eyes.Add(record);
                             break;
                         case HeadPart.TypeEnum.Hair:
-                            female.Hair.Add(record);
+                            if (IsLikelyTopLevelHair(record))
+                                female.Hair.Add(record);
                             break;
                         case HeadPart.TypeEnum.Scars:
                             female.Scar.Add(record);
@@ -96,7 +98,8 @@ namespace FO4FalloutGeneticsPatch
                             male.Eyes.Add(record);
                             break;
                         case HeadPart.TypeEnum.Hair:
-                            male.Hair.Add(record);
+                            if (IsLikelyTopLevelHair(record))
+                                male.Hair.Add(record);
                             break;
                         case HeadPart.TypeEnum.FacialHair:
                             if (IsLikelyTopLevelFacialHair(record))
@@ -200,7 +203,7 @@ namespace FO4FalloutGeneticsPatch
                     AddRandomSimplePart(partSet, male.Brows, random);
                     AddRandomSimplePart(partSet, male.Scar, random);
 
-                    // Always assign a top-level facial-hair bundle if available
+                    // Always assign facial hair if any valid top-level parent exists
                     AddRandomBundledPartDirectOnlySameMod(partSet, male.FacialHair, random, state);
 
                     presets = male.Presets;
@@ -260,7 +263,6 @@ namespace FO4FalloutGeneticsPatch
             IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
         {
             var parentMod = chosen.FormKey.ModKey;
-
             target.Add(chosen.FormKey);
 
             if (chosen.ExtraParts is null) return;
@@ -280,14 +282,46 @@ namespace FO4FalloutGeneticsPatch
             }
         }
 
+        private static bool IsLikelyTopLevelHair(IHeadPartGetter part)
+        {
+            if (part.Type != HeadPart.TypeEnum.Hair) return false;
+
+            var edid = part.EditorID ?? string.Empty;
+            var full = part.Name?.String ?? string.Empty;
+            int extraCount = part.ExtraParts?.Count ?? 0;
+
+            if (edid.StartsWith("Part", StringComparison.OrdinalIgnoreCase)) return false;
+            if (edid.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
+            if (edid.Contains("Hairpart", StringComparison.OrdinalIgnoreCase)) return false;
+            if (edid.Contains("Scalp", StringComparison.OrdinalIgnoreCase)) return false;
+            if (edid.Contains("BackScalp", StringComparison.OrdinalIgnoreCase)) return false;
+
+            if (full.Contains("Scalp", StringComparison.OrdinalIgnoreCase)) return false;
+            if (full.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
+
+            // Hair parents should not have giant extra-part bundles
+            if (extraCount > 4) return false;
+
+            return true;
+        }
+
         private static bool IsLikelyTopLevelFacialHair(IHeadPartGetter part)
         {
             if (part.Type != HeadPart.TypeEnum.FacialHair) return false;
 
             var edid = part.EditorID ?? string.Empty;
+            var full = part.Name?.String ?? string.Empty;
+            int extraCount = part.ExtraParts?.Count ?? 0;
 
             if (edid.StartsWith("Part", StringComparison.OrdinalIgnoreCase)) return false;
             if (edid.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
+
+            if (full.Contains("Part ", StringComparison.OrdinalIgnoreCase)) return false;
+            if (full.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
+
+            // Composite beard/meta records in the uploaded beard mod had very large bundles.
+            // Keep only sane parent records.
+            if (extraCount > 6) return false;
 
             return true;
         }
