@@ -188,7 +188,7 @@ namespace FO4FalloutGeneticsPatch
                     AddParts(partSet, female.DefaultPreset);
 
                     AddRandomSimplePart(partSet, female.Eyes, random);
-                    AddRandomBundledPartDirectOnlySameMod(partSet, female.Hair, random, state);
+                    AddRandomBundledPartDirectOnlySameMod(partSet, female.Hair, random);
                     AddRandomSimplePart(partSet, female.Brows, random);
                     AddRandomSimplePart(partSet, female.Scar, random);
 
@@ -199,12 +199,12 @@ namespace FO4FalloutGeneticsPatch
                     AddParts(partSet, male.DefaultPreset);
 
                     AddRandomSimplePart(partSet, male.Eyes, random);
-                    AddRandomBundledPartDirectOnlySameMod(partSet, male.Hair, random, state);
+                    AddRandomBundledPartDirectOnlySameMod(partSet, male.Hair, random);
                     AddRandomSimplePart(partSet, male.Brows, random);
                     AddRandomSimplePart(partSet, male.Scar, random);
 
-                    // Always assign facial hair if any valid top-level parent exists
-                    AddRandomBundledPartDirectOnlySameMod(partSet, male.FacialHair, random, state);
+                    // Always assign a beard bundle if any valid facial-hair parent exists
+                    AddRandomBundledPartDirectOnlySameMod(partSet, male.FacialHair, random);
 
                     presets = male.Presets;
                 }
@@ -246,23 +246,22 @@ namespace FO4FalloutGeneticsPatch
         private static void AddRandomBundledPartDirectOnlySameMod(
             HashSet<FormKey> target,
             List<IHeadPartGetter> source,
-            Random random,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
+            Random random)
         {
             if (source.Count == 0) return;
 
             var chosen = source[random.Next(source.Count)];
             if (chosen is null) return;
 
-            AddHeadPartDirectBundleSameMod(target, chosen, state);
+            AddHeadPartDirectBundleSameMod(target, chosen);
         }
 
         private static void AddHeadPartDirectBundleSameMod(
             HashSet<FormKey> target,
-            IHeadPartGetter chosen,
-            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
+            IHeadPartGetter chosen)
         {
             var parentMod = chosen.FormKey.ModKey;
+
             target.Add(chosen.FormKey);
 
             if (chosen.ExtraParts is null) return;
@@ -270,15 +269,12 @@ namespace FO4FalloutGeneticsPatch
             foreach (var extra in chosen.ExtraParts)
             {
                 if (extra.IsNull) continue;
-                if (!extra.FormKey.ModKey.Equals(parentMod)) continue;
 
-                if (!state.LinkCache.TryResolve<IHeadPartGetter>(extra.FormKey, out var resolved))
+                // Keep only extras from the same plugin as the selected parent
+                if (!extra.FormKey.ModKey.Equals(parentMod))
                     continue;
-                if (resolved is null) continue;
-                if (resolved.IsDeleted) continue;
-                if (!resolved.FormKey.ModKey.Equals(parentMod)) continue;
 
-                target.Add(resolved.FormKey);
+                target.Add(extra.FormKey);
             }
         }
 
@@ -288,7 +284,6 @@ namespace FO4FalloutGeneticsPatch
 
             var edid = part.EditorID ?? string.Empty;
             var full = part.Name?.String ?? string.Empty;
-            int extraCount = part.ExtraParts?.Count ?? 0;
 
             if (edid.StartsWith("Part", StringComparison.OrdinalIgnoreCase)) return false;
             if (edid.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
@@ -299,9 +294,6 @@ namespace FO4FalloutGeneticsPatch
             if (full.Contains("Scalp", StringComparison.OrdinalIgnoreCase)) return false;
             if (full.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
 
-            // Hair parents should not have giant extra-part bundles
-            if (extraCount > 4) return false;
-
             return true;
         }
 
@@ -311,17 +303,12 @@ namespace FO4FalloutGeneticsPatch
 
             var edid = part.EditorID ?? string.Empty;
             var full = part.Name?.String ?? string.Empty;
-            int extraCount = part.ExtraParts?.Count ?? 0;
 
             if (edid.StartsWith("Part", StringComparison.OrdinalIgnoreCase)) return false;
             if (edid.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
 
             if (full.Contains("Part ", StringComparison.OrdinalIgnoreCase)) return false;
             if (full.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
-
-            // Composite beard/meta records in the uploaded beard mod had very large bundles.
-            // Keep only sane parent records.
-            if (extraCount > 6) return false;
 
             return true;
         }
