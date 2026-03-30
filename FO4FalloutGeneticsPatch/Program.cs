@@ -171,9 +171,12 @@ namespace FO4FalloutGeneticsPatch
                 if (record.Race.IsNull || !record.Race.FormKey.Equals(Fallout4.Race.HumanRace.FormKey)) continue;
 
                 var newRecord = npcContext.GetOrAddAsOverride(state.PatchMod);
-                newRecord.HeadParts.Clear();
 
                 var partSet = new HashSet<FormKey>();
+
+                // Preserve all existing non-target headparts so base face parts do not disappear.
+                PreserveExistingNonReplacedHeadParts(partSet, record, state);
+
                 var presets = new List<Preset>();
 
                 bool useFemaleParts =
@@ -182,6 +185,7 @@ namespace FO4FalloutGeneticsPatch
 
                 if (useFemaleParts)
                 {
+                    // Keep defaults too, just in case an NPC was missing them.
                     AddParts(partSet, female.DefaultPreset);
 
                     AddRandomSimplePart(partSet, female.Eyes, random);
@@ -200,11 +204,13 @@ namespace FO4FalloutGeneticsPatch
                     AddRandomSimplePart(partSet, male.Brows, random);
                     AddRandomSimplePart(partSet, male.Scar, random);
 
+                    // Always assign facial hair if available
                     AddRandomBundledPartDirectOnlySameMod(partSet, male.FacialHair, random);
 
                     presets = male.Presets;
                 }
 
+                newRecord.HeadParts.Clear();
                 newRecord.HeadParts.AddRange(partSet);
 
                 if (Settings.UseMorphs && presets.Count > 0)
@@ -215,6 +221,44 @@ namespace FO4FalloutGeneticsPatch
                     var child = Genetics(p1.Morphs, p2.Morphs, random.NextDouble());
                     Morph(newRecord, child);
                 }
+            }
+        }
+
+        private static void PreserveExistingNonReplacedHeadParts(
+            HashSet<FormKey> target,
+            INpcGetter npc,
+            IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
+        {
+            if (npc.HeadParts is null) return;
+
+            foreach (var hp in npc.HeadParts)
+            {
+                if (hp.IsNull) continue;
+
+                if (!state.LinkCache.TryResolve<IHeadPartGetter>(hp.FormKey, out var resolved))
+                {
+                    // If it doesn't resolve, preserve it rather than risk deleting a valid part.
+                    target.Add(hp.FormKey);
+                    continue;
+                }
+
+                if (resolved is null)
+                {
+                    target.Add(hp.FormKey);
+                    continue;
+                }
+
+                // These are the categories we intentionally regenerate.
+                if (resolved.Type == HeadPart.TypeEnum.Eyes ||
+                    resolved.Type == HeadPart.TypeEnum.Hair ||
+                    resolved.Type == HeadPart.TypeEnum.FacialHair ||
+                    resolved.Type == HeadPart.TypeEnum.Eyebrows ||
+                    resolved.Type == HeadPart.TypeEnum.Scars)
+                {
+                    continue;
+                }
+
+                target.Add(hp.FormKey);
             }
         }
 
@@ -280,7 +324,6 @@ namespace FO4FalloutGeneticsPatch
 
             if (edid.StartsWith("Part", StringComparison.OrdinalIgnoreCase)) return false;
             if (edid.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
-
             if (full.Contains("Part ", StringComparison.OrdinalIgnoreCase)) return false;
             if (full.Contains("Hairline", StringComparison.OrdinalIgnoreCase)) return false;
 
@@ -310,11 +353,9 @@ namespace FO4FalloutGeneticsPatch
 
         private static Dictionary<string, List<double>> ConvolveRegions(
             Dictionary<string, List<double>> x,
-            Dictionary<string, List<double>> y,
-            double t)
+            Dictionary<string, List<double>> y, double t)
         {
             var child = new Dictionary<string, List<double>>();
-
             foreach (var i in x.Keys)
             {
                 var yi = new List<double> { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
@@ -334,11 +375,9 @@ namespace FO4FalloutGeneticsPatch
 
         private static Dictionary<string, double> ConvolvePresets(
             Dictionary<string, double> x,
-            Dictionary<string, double> y,
-            double t)
+            Dictionary<string, double> y, double t)
         {
             var child = new Dictionary<string, double>();
-
             foreach (var i in x.Keys)
             {
                 var yi = 0.0;
@@ -358,7 +397,6 @@ namespace FO4FalloutGeneticsPatch
         private static void Morph(INpc r, PresetMorph p)
         {
             r.FaceMorphs.Clear();
-
             var reg = p.Regions;
             foreach (var pt in reg.Keys)
             {
@@ -393,7 +431,6 @@ namespace FO4FalloutGeneticsPatch
                 LowerTorso = (float)bm[3],
                 Legs = (float)bm[4]
             };
-
             r.FacialMorphIntensity = null;
         }
     }
