@@ -201,10 +201,7 @@ namespace FO4FalloutGeneticsPatch
                     AddRandomBundledPart(partSet, male.Hair, random, state, allPlayableHeadParts, false, includePrefixFamily: true);
                     AddRandomSimplePart(partSet, male.Brows, random);
                     AddRandomSimplePart(partSet, male.Scar, random);
-
-                    if (random.Next(1, 6) < 3)
-                    {
-                        AddRandomBundledPart(partSet, male.FacialHair, random, state, allPlayableHeadParts, false, includePrefixFamily: true);
+                    AddRandomBundledPart(partSet, male.FacialHair, random, state, allPlayableHeadParts, false, includePrefixFamily: true);
                     }
 
                     presets = male.Presets;
