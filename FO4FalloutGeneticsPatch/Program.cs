@@ -33,7 +33,12 @@ namespace FO4FalloutGeneticsPatch
             var male = new GenderRecord();
             var neutral = new GenderRecord();
 
+            // Precompute direct extras from the winning records.
             var directExtrasByParent = new Dictionary<FormKey, List<FormKey>>();
+
+            // Track every helper/child part used by a HAIR or FACIAL HAIR parent.
+            // These are the stale orphan pieces we do NOT want to preserve from old NPC records.
+            var generatedBundleChildParts = new HashSet<FormKey>();
 
             foreach (var hdptContext in state.LoadOrder.PriorityOrder.HeadPart().WinningContextOverrides())
             {
@@ -48,12 +53,19 @@ namespace FO4FalloutGeneticsPatch
                     {
                         if (extra.IsNull) continue;
                         extras.Add(extra.FormKey);
+
+                        if (record.Type == HeadPart.TypeEnum.Hair ||
+                            record.Type == HeadPart.TypeEnum.FacialHair)
+                        {
+                            generatedBundleChildParts.Add(extra.FormKey);
+                        }
                     }
                 }
 
                 directExtrasByParent[record.FormKey] = extras;
             }
 
+            // Build randomized parent pools.
             foreach (var hdptContext in state.LoadOrder.PriorityOrder.HeadPart().WinningContextOverrides())
             {
                 var record = hdptContext.Record;
@@ -188,7 +200,12 @@ namespace FO4FalloutGeneticsPatch
 
                 var newRecord = npcContext.GetOrAddAsOverride(state.PatchMod);
 
-                var finalParts = GetPreservedExistingNonGeneratedParts(record, state.LinkCache);
+                // Preserve only non-generated / non-bundle-child parts from the old NPC.
+                var finalParts = GetPreservedExistingNonGeneratedParts(
+                    record,
+                    state.LinkCache,
+                    generatedBundleChildParts);
+
                 var presets = new List<Preset>();
 
                 bool useFemaleParts =
@@ -231,7 +248,8 @@ namespace FO4FalloutGeneticsPatch
 
         private static List<FormKey> GetPreservedExistingNonGeneratedParts(
             INpcGetter npc,
-            ILinkCache<IFallout4Mod, IFallout4ModGetter> linkCache)
+            ILinkCache<IFallout4Mod, IFallout4ModGetter> linkCache,
+            HashSet<FormKey> generatedBundleChildParts)
         {
             var result = new List<FormKey>();
             if (npc.HeadParts is null) return result;
@@ -240,12 +258,17 @@ namespace FO4FalloutGeneticsPatch
             {
                 if (hp.IsNull) continue;
 
+                // Remove stale old helper parts from previous hair/beard bundles.
+                if (generatedBundleChildParts.Contains(hp.FormKey))
+                    continue;
+
                 if (!linkCache.TryResolve<IHeadPartGetter>(hp.FormKey, out var resolved) || resolved is null)
                 {
                     AddUnique(result, hp.FormKey);
                     continue;
                 }
 
+                // Remove the categories we intentionally regenerate.
                 if (resolved.Type == HeadPart.TypeEnum.Eyes ||
                     resolved.Type == HeadPart.TypeEnum.Hair ||
                     resolved.Type == HeadPart.TypeEnum.FacialHair ||
