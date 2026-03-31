@@ -451,7 +451,9 @@ namespace FO4FalloutGeneticsPatch
                 LowerTorso = (float)bm[3],
                 Legs = (float)bm[4]
             };
-            r.FacialMorphIntensity = null;
+
+            // Preserve any existing FMIN/FacialMorphIntensity from the original record.
+            // Do not clear it here.
         }
     }
 }
