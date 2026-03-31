@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
@@ -20,9 +18,6 @@ namespace FO4FalloutGeneticsPatch
         private static Lazy<Settings> _settings;
         private static Settings Settings => _settings.Value;
 
-        private static readonly StringBuilder DebugLog = new StringBuilder();
-        private static readonly object LogLock = new object();
-
         public static async Task<int> Main(string[] args)
         {
             return await SynthesisPipeline.Instance
@@ -34,12 +29,15 @@ namespace FO4FalloutGeneticsPatch
 
         public static void RunPatch(IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
         {
-            Log("PATCHER STARTED");
-            FlushLog(state, "startup");
-
             var female = new GenderRecord();
             var male = new GenderRecord();
             var neutral = new GenderRecord();
+
+            // Precompute:
+            // 1) every headpart that is referenced as someone else's direct extra
+            // 2) the direct extras for each parent headpart
+            var referencedAsExtra = new HashSet<FormKey>();
+            var directExtrasByParent = new Dictionary<FormKey, List<FormKey>>();
 
             foreach (var hdptContext in state.LoadOrder.PriorityOrder.HeadPart().WinningContextOverrides())
             {
@@ -54,8 +52,43 @@ namespace FO4FalloutGeneticsPatch
                     !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHumanGhouls.FormKey))
                     continue;
 
-                if ((record.Flags.HasFlag(HeadPart.Flag.Female) && record.Flags.HasFlag(HeadPart.Flag.Male)) ||
-                    (!record.Flags.HasFlag(HeadPart.Flag.Female) && !record.Flags.HasFlag(HeadPart.Flag.Male)))
+                var extras = new List<FormKey>();
+
+                if (record.ExtraParts is not null)
+                {
+                    foreach (var extra in record.ExtraParts)
+                    {
+                        if (extra.IsNull) continue;
+                        extras.Add(extra.FormKey);
+                        referencedAsExtra.Add(extra.FormKey);
+                    }
+                }
+
+                directExtrasByParent[record.FormKey] = extras;
+            }
+
+            // Build random parent pools
+            foreach (var hdptContext in state.LoadOrder.PriorityOrder.HeadPart().WinningContextOverrides())
+            {
+                var record = hdptContext.Record;
+                if (record is null) continue;
+                if (record.IsDeleted) continue;
+                if (record.MajorFlags.HasFlag(HeadPart.MajorFlag.NonPlayable)) continue;
+
+                if (record.ValidRaces.IsNull) continue;
+                if (!record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsGhouls.FormKey) &&
+                    !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHuman.FormKey) &&
+                    !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHumanGhouls.FormKey))
+                    continue;
+
+                bool femaleFlag = record.Flags.HasFlag(HeadPart.Flag.Female);
+                bool maleFlag = record.Flags.HasFlag(HeadPart.Flag.Male);
+
+                bool isNeutral =
+                    (femaleFlag && maleFlag) ||
+                    (!femaleFlag && !maleFlag);
+
+                if (isNeutral)
                 {
                     switch (record.Type)
                     {
@@ -63,10 +96,11 @@ namespace FO4FalloutGeneticsPatch
                             neutral.Eyes.Add(record);
                             break;
                         case HeadPart.TypeEnum.Hair:
-                            neutral.Hair.Add(record);
+                            if (IsTopLevelHairParent(record, referencedAsExtra))
+                                neutral.Hair.Add(record);
                             break;
                         case HeadPart.TypeEnum.FacialHair:
-                            if (IsLikelyTopLevelFacialHair(record))
+                            if (IsTopLevelFacialHairParent(record, referencedAsExtra))
                                 neutral.FacialHair.Add(record);
                             break;
                         case HeadPart.TypeEnum.Scars:
@@ -77,7 +111,7 @@ namespace FO4FalloutGeneticsPatch
                             break;
                     }
                 }
-                else if (record.Flags.HasFlag(HeadPart.Flag.Female))
+                else if (femaleFlag)
                 {
                     switch (record.Type)
                     {
@@ -85,7 +119,8 @@ namespace FO4FalloutGeneticsPatch
                             female.Eyes.Add(record);
                             break;
                         case HeadPart.TypeEnum.Hair:
-                            female.Hair.Add(record);
+                            if (IsTopLevelHairParent(record, referencedAsExtra))
+                                female.Hair.Add(record);
                             break;
                         case HeadPart.TypeEnum.Scars:
                             female.Scar.Add(record);
@@ -95,7 +130,7 @@ namespace FO4FalloutGeneticsPatch
                             break;
                     }
                 }
-                else if (record.Flags.HasFlag(HeadPart.Flag.Male))
+                else if (maleFlag)
                 {
                     switch (record.Type)
                     {
@@ -103,10 +138,11 @@ namespace FO4FalloutGeneticsPatch
                             male.Eyes.Add(record);
                             break;
                         case HeadPart.TypeEnum.Hair:
-                            male.Hair.Add(record);
+                            if (IsTopLevelHairParent(record, referencedAsExtra))
+                                male.Hair.Add(record);
                             break;
                         case HeadPart.TypeEnum.FacialHair:
-                            if (IsLikelyTopLevelFacialHair(record))
+                            if (IsTopLevelFacialHairParent(record, referencedAsExtra))
                                 male.FacialHair.Add(record);
                             break;
                         case HeadPart.TypeEnum.Scars:
@@ -125,12 +161,6 @@ namespace FO4FalloutGeneticsPatch
                 $"Female headparts:\n\tEyes - {female.Eyes.Count}\n\tHair - {female.Hair.Count}\n\tEyebrows - {female.Brows.Count}\n\tScars - {female.Scar.Count}");
             Console.WriteLine(
                 $"Male headparts:\n\tEyes - {male.Eyes.Count}\n\tHair - {male.Hair.Count}\n\tEyebrows - {male.Brows.Count}\n\tScars - {male.Scar.Count}\n\tFacial Hair - {male.FacialHair.Count}");
-
-            Log("POOL COUNTS");
-            Log($"Neutral Eyes={neutral.Eyes.Count}, Hair={neutral.Hair.Count}, Brows={neutral.Brows.Count}, Scars={neutral.Scar.Count}, FacialHair={neutral.FacialHair.Count}");
-            Log($"Female Eyes={female.Eyes.Count}, Hair={female.Hair.Count}, Brows={female.Brows.Count}, Scars={female.Scar.Count}");
-            Log($"Male Eyes={male.Eyes.Count}, Hair={male.Hair.Count}, Brows={male.Brows.Count}, Scars={male.Scar.Count}, FacialHair={male.FacialHair.Count}");
-            FlushLog(state, "after-pools");
 
             male.Eyes.AddRange(neutral.Eyes);
             male.Hair.AddRange(neutral.Hair);
@@ -175,11 +205,6 @@ namespace FO4FalloutGeneticsPatch
             }
 
             Console.WriteLine($"Found {female.Presets.Count} female presets and {male.Presets.Count} male presets.");
-            Log($"Presets female={female.Presets.Count}, male={male.Presets.Count}");
-            FlushLog(state, "after-presets");
-
-            int inspected = 0;
-            Log("STARTING NPC LOOP");
 
             foreach (var npcContext in state.LoadOrder.PriorityOrder.Npc().WinningContextOverrides())
             {
@@ -197,47 +222,24 @@ namespace FO4FalloutGeneticsPatch
                     (record.Flags.HasFlag(Npc.Flag.Female) && Settings.FemaleParts == PartGenderType.Female) ||
                     (!record.Flags.HasFlag(Npc.Flag.Female) && Settings.MaleParts == PartGenderType.Female);
 
-                bool doLogNpc = inspected < 20;
-                if (doLogNpc)
-                {
-                    inspected++;
-                    Log("");
-                    Log($"NPC {inspected}: {DescribeNpc(record)}");
-                    Log($"Preserved existing non-generated parts ({finalParts.Count}):");
-                    foreach (var fk in finalParts)
-                    {
-                        Log($"  keep -> {DescribeHeadPartFormKey(fk, state.LinkCache)}");
-                    }
-                }
-
                 if (useFemaleParts)
                 {
-                    AddMissingDefaults(finalParts, female.DefaultPreset, doLogNpc ? "female defaults" : null);
-                    AddRandomSimplePart(finalParts, female.Eyes, random, doLogNpc ? "female eyes" : null);
-                    AddRandomBundledPartDirectOnly(finalParts, female.Hair, random, doLogNpc ? "female hair" : null);
-                    AddRandomSimplePart(finalParts, female.Brows, random, doLogNpc ? "female brows" : null);
-                    AddRandomSimplePart(finalParts, female.Scar, random, doLogNpc ? "female scars" : null);
+                    AddMissingDefaults(finalParts, female.DefaultPreset);
+                    AddRandomSimplePart(finalParts, female.Eyes, random);
+                    AddRandomBundledPartFromMap(finalParts, female.Hair, random, directExtrasByParent);
+                    AddRandomSimplePart(finalParts, female.Brows, random);
+                    AddRandomSimplePart(finalParts, female.Scar, random);
                     presets = female.Presets;
                 }
                 else
                 {
-                    AddMissingDefaults(finalParts, male.DefaultPreset, doLogNpc ? "male defaults" : null);
-                    AddRandomSimplePart(finalParts, male.Eyes, random, doLogNpc ? "male eyes" : null);
-                    AddRandomBundledPartDirectOnly(finalParts, male.Hair, random, doLogNpc ? "male hair" : null);
-                    AddRandomSimplePart(finalParts, male.Brows, random, doLogNpc ? "male brows" : null);
-                    AddRandomSimplePart(finalParts, male.Scar, random, doLogNpc ? "male scars" : null);
-                    AddRandomBundledPartDirectOnly(finalParts, male.FacialHair, random, doLogNpc ? "male facial hair" : null);
+                    AddMissingDefaults(finalParts, male.DefaultPreset);
+                    AddRandomSimplePart(finalParts, male.Eyes, random);
+                    AddRandomBundledPartFromMap(finalParts, male.Hair, random, directExtrasByParent);
+                    AddRandomSimplePart(finalParts, male.Brows, random);
+                    AddRandomSimplePart(finalParts, male.Scar, random);
+                    AddRandomBundledPartFromMap(finalParts, male.FacialHair, random, directExtrasByParent);
                     presets = male.Presets;
-                }
-
-                if (doLogNpc)
-                {
-                    Log($"Final HeadParts to write ({finalParts.Count}):");
-                    foreach (var fk in finalParts)
-                    {
-                        Log($"  final -> {DescribeHeadPartFormKey(fk, state.LinkCache)}");
-                    }
-                    FlushLog(state, $"npc-{inspected}");
                 }
 
                 newRecord.HeadParts.Clear();
@@ -252,9 +254,6 @@ namespace FO4FalloutGeneticsPatch
                     Morph(newRecord, child);
                 }
             }
-
-            Log("PATCHER FINISHED");
-            FlushLog(state, "final");
         }
 
         private static List<FormKey> GetPreservedExistingNonGeneratedParts(
@@ -289,111 +288,15 @@ namespace FO4FalloutGeneticsPatch
             return result;
         }
 
-        private static void AddMissingDefaults(List<FormKey> target, IEnumerable<FormKey> defaults, string label)
+        private static bool IsTopLevelHairParent(IHeadPartGetter part, HashSet<FormKey> referencedAsExtra)
         {
-            foreach (var fk in defaults)
-            {
-                AddUnique(target, fk);
-            }
-
-            if (!string.IsNullOrWhiteSpace(label))
-                Log($"{label}: ensured defaults");
+            return part.Type == HeadPart.TypeEnum.Hair && !referencedAsExtra.Contains(part.FormKey);
         }
 
-        private static void AddRandomSimplePart(
-            List<FormKey> target,
-            List<IHeadPartGetter> source,
-            Random random,
-            string label)
-        {
-            if (source.Count == 0)
-            {
-                if (!string.IsNullOrWhiteSpace(label))
-                    Log($"{label}: pool empty");
-                return;
-            }
-
-            var chosen = source[random.Next(source.Count)];
-            if (chosen is null)
-            {
-                if (!string.IsNullOrWhiteSpace(label))
-                    Log($"{label}: chosen null");
-                return;
-            }
-
-            AddUnique(target, chosen.FormKey);
-
-            if (!string.IsNullOrWhiteSpace(label))
-                Log($"{label}: chose {DescribeHeadPart(chosen)}");
-        }
-
-        private static void AddRandomBundledPartDirectOnly(
-            List<FormKey> target,
-            List<IHeadPartGetter> source,
-            Random random,
-            string label)
-        {
-            if (source.Count == 0)
-            {
-                if (!string.IsNullOrWhiteSpace(label))
-                    Log($"{label}: pool empty");
-                return;
-            }
-
-            var chosen = source[random.Next(source.Count)];
-            if (chosen is null)
-            {
-                if (!string.IsNullOrWhiteSpace(label))
-                    Log($"{label}: chosen null");
-                return;
-            }
-
-            AddDirectBundle(target, chosen, label);
-        }
-
-        private static void AddDirectBundle(
-            List<FormKey> target,
-            IHeadPartGetter chosen,
-            string label)
-        {
-            AddUnique(target, chosen.FormKey);
-
-            if (!string.IsNullOrWhiteSpace(label))
-            {
-                Log($"{label}: parent {DescribeHeadPart(chosen)}");
-                Log($"{label}: direct ExtraParts count = {chosen.ExtraParts?.Count ?? 0}");
-            }
-
-            if (chosen.ExtraParts is null) return;
-
-            int i = 0;
-            foreach (var extra in chosen.ExtraParts)
-            {
-                if (extra.IsNull) continue;
-                AddUnique(target, extra.FormKey);
-
-                if (!string.IsNullOrWhiteSpace(label))
-                {
-                    i++;
-                    Log($"{label}: extra {i} -> {extra.FormKey}");
-                }
-            }
-        }
-
-        private static void AddUnique(List<FormKey> target, FormKey fk)
-        {
-            foreach (var existing in target)
-            {
-                if (existing.Equals(fk))
-                    return;
-            }
-
-            target.Add(fk);
-        }
-
-        private static bool IsLikelyTopLevelFacialHair(IHeadPartGetter part)
+        private static bool IsTopLevelFacialHairParent(IHeadPartGetter part, HashSet<FormKey> referencedAsExtra)
         {
             if (part.Type != HeadPart.TypeEnum.FacialHair) return false;
+            if (referencedAsExtra.Contains(part.FormKey)) return false;
 
             var edid = part.EditorID ?? string.Empty;
             var full = part.Name?.String ?? string.Empty;
@@ -406,88 +309,49 @@ namespace FO4FalloutGeneticsPatch
             return true;
         }
 
-        private static string DescribeNpc(INpcGetter npc)
+        private static void AddMissingDefaults(List<FormKey> target, IEnumerable<FormKey> defaults)
         {
-            string edid = npc.EditorID ?? "<no EDID>";
-            return $"{edid} [{npc.FormKey}] Female={npc.Flags.HasFlag(Npc.Flag.Female)}";
+            foreach (var fk in defaults)
+                AddUnique(target, fk);
         }
 
-        private static string DescribeHeadPart(IHeadPartGetter hp)
+        private static void AddRandomSimplePart(
+            List<FormKey> target,
+            List<IHeadPartGetter> source,
+            Random random)
         {
-            string edid = hp.EditorID ?? "<no EDID>";
-            string name = hp.Name?.String ?? "<no name>";
-            return $"{edid} | {name} | {hp.Type} | [{hp.FormKey}]";
+            if (source.Count == 0) return;
+            var chosen = source[random.Next(source.Count)];
+            if (chosen is null) return;
+
+            AddUnique(target, chosen.FormKey);
         }
 
-        private static string DescribeHeadPartFormKey(FormKey fk, ILinkCache<IFallout4Mod, IFallout4ModGetter> linkCache)
+        private static void AddRandomBundledPartFromMap(
+            List<FormKey> target,
+            List<IHeadPartGetter> source,
+            Random random,
+            Dictionary<FormKey, List<FormKey>> directExtrasByParent)
         {
-            if (!linkCache.TryResolve<IHeadPartGetter>(fk, out var hp) || hp is null)
-                return fk.ToString();
+            if (source.Count == 0) return;
+            var chosen = source[random.Next(source.Count)];
+            if (chosen is null) return;
 
-            return DescribeHeadPart(hp);
+            AddUnique(target, chosen.FormKey);
+
+            if (!directExtrasByParent.TryGetValue(chosen.FormKey, out var extras)) return;
+            foreach (var extra in extras)
+                AddUnique(target, extra);
         }
 
-        private static void Log(string text)
+        private static void AddUnique(List<FormKey> target, FormKey fk)
         {
-            lock (LogLock)
+            foreach (var existing in target)
             {
-                DebugLog.AppendLine(text);
+                if (existing.Equals(fk))
+                    return;
             }
-        }
-
-        private static void FlushLog(IPatcherState<IFallout4Mod, IFallout4ModGetter> state, string stage)
-        {
-            lock (LogLock)
-            {
-                var text = DebugLog.ToString();
-
-                var paths = new List<string>();
-
-                try
-                {
-                    var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                    if (!string.IsNullOrWhiteSpace(desktop))
-                        paths.Add(Path.Combine(desktop, "FalloutGenetics_debug_log.txt"));
-                }
-                catch { }
-
-                try
-                {
-                    if (!string.IsNullOrWhiteSpace(state.DataFolderPath))
-                        paths.Add(Path.Combine(state.DataFolderPath, "FalloutGenetics_debug_log.txt"));
-                }
-                catch { }
-
-                try
-                {
-                    var temp = Path.GetTempPath();
-                    if (!string.IsNullOrWhiteSpace(temp))
-                        paths.Add(Path.Combine(temp, "FalloutGenetics_debug_log.txt"));
-                }
-                catch { }
-
-                bool wroteAny = false;
-
-                foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        File.WriteAllText(path, text);
-                        wroteAny = true;
-                        Console.WriteLine($"DEBUG LOG WRITTEN ({stage}) TO: {path}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"FAILED TO WRITE DEBUG LOG ({stage}) TO: {path}");
-                        Console.WriteLine(ex.Message);
-                    }
-                }
-
-                if (!wroteAny)
-                {
-                    Console.WriteLine($"DEBUG LOG NOT WRITTEN AT STAGE: {stage}");
-                }
-            }
+            target.Add(fk);
         }
 
         private static PresetMorph Genetics(PresetMorph p1, PresetMorph p2, double t)
