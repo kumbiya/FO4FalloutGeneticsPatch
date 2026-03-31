@@ -21,6 +21,7 @@ namespace FO4FalloutGeneticsPatch
         private static Settings Settings => _settings.Value;
 
         private static readonly StringBuilder DebugLog = new StringBuilder();
+        private static readonly object LogLock = new object();
 
         public static async Task<int> Main(string[] args)
         {
@@ -33,11 +34,12 @@ namespace FO4FalloutGeneticsPatch
 
         public static void RunPatch(IPatcherState<IFallout4Mod, IFallout4ModGetter> state)
         {
+            Log("PATCHER STARTED");
+            FlushLog(state, "startup");
+
             var female = new GenderRecord();
             var male = new GenderRecord();
             var neutral = new GenderRecord();
-
-            Log($"=== Fallout Genetics diagnostic run {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
 
             foreach (var hdptContext in state.LoadOrder.PriorityOrder.HeadPart().WinningContextOverrides())
             {
@@ -124,10 +126,11 @@ namespace FO4FalloutGeneticsPatch
             Console.WriteLine(
                 $"Male headparts:\n\tEyes - {male.Eyes.Count}\n\tHair - {male.Hair.Count}\n\tEyebrows - {male.Brows.Count}\n\tScars - {male.Scar.Count}\n\tFacial Hair - {male.FacialHair.Count}");
 
-            Log($"Pools:");
+            Log("POOL COUNTS");
             Log($"Neutral Eyes={neutral.Eyes.Count}, Hair={neutral.Hair.Count}, Brows={neutral.Brows.Count}, Scars={neutral.Scar.Count}, FacialHair={neutral.FacialHair.Count}");
             Log($"Female Eyes={female.Eyes.Count}, Hair={female.Hair.Count}, Brows={female.Brows.Count}, Scars={female.Scar.Count}");
             Log($"Male Eyes={male.Eyes.Count}, Hair={male.Hair.Count}, Brows={male.Brows.Count}, Scars={male.Scar.Count}, FacialHair={male.FacialHair.Count}");
+            FlushLog(state, "after-pools");
 
             male.Eyes.AddRange(neutral.Eyes);
             male.Hair.AddRange(neutral.Hair);
@@ -172,9 +175,11 @@ namespace FO4FalloutGeneticsPatch
             }
 
             Console.WriteLine($"Found {female.Presets.Count} female presets and {male.Presets.Count} male presets.");
-            Log($"Presets: female={female.Presets.Count}, male={male.Presets.Count}");
+            Log($"Presets female={female.Presets.Count}, male={male.Presets.Count}");
+            FlushLog(state, "after-presets");
 
             int inspected = 0;
+            Log("STARTING NPC LOOP");
 
             foreach (var npcContext in state.LoadOrder.PriorityOrder.Npc().WinningContextOverrides())
             {
@@ -186,7 +191,6 @@ namespace FO4FalloutGeneticsPatch
                 var newRecord = npcContext.GetOrAddAsOverride(state.PatchMod);
 
                 var finalParts = GetPreservedExistingNonGeneratedParts(record, state.LinkCache);
-
                 var presets = new List<Preset>();
 
                 bool useFemaleParts =
@@ -199,7 +203,11 @@ namespace FO4FalloutGeneticsPatch
                     inspected++;
                     Log("");
                     Log($"NPC {inspected}: {DescribeNpc(record)}");
-                    Log($"Existing preserved non-generated parts: {string.Join(", ", finalParts.Select(f => f.ToString()))}");
+                    Log($"Preserved existing non-generated parts ({finalParts.Count}):");
+                    foreach (var fk in finalParts)
+                    {
+                        Log($"  keep -> {DescribeHeadPartFormKey(fk, state.LinkCache)}");
+                    }
                 }
 
                 if (useFemaleParts)
@@ -227,8 +235,9 @@ namespace FO4FalloutGeneticsPatch
                     Log($"Final HeadParts to write ({finalParts.Count}):");
                     foreach (var fk in finalParts)
                     {
-                        Log($"  -> {DescribeHeadPartFormKey(fk, state.LinkCache)}");
+                        Log($"  final -> {DescribeHeadPartFormKey(fk, state.LinkCache)}");
                     }
+                    FlushLog(state, $"npc-{inspected}");
                 }
 
                 newRecord.HeadParts.Clear();
@@ -244,9 +253,8 @@ namespace FO4FalloutGeneticsPatch
                 }
             }
 
-            var logPath = Path.Combine(state.DataFolderPath, "FalloutGenetics_debug_log.txt");
-            File.WriteAllText(logPath, DebugLog.ToString());
-            Console.WriteLine($"Diagnostic log written to: {logPath}");
+            Log("PATCHER FINISHED");
+            FlushLog(state, "final");
         }
 
         private static List<FormKey> GetPreservedExistingNonGeneratedParts(
@@ -281,7 +289,7 @@ namespace FO4FalloutGeneticsPatch
             return result;
         }
 
-        private static void AddMissingDefaults(List<FormKey> target, IEnumerable<FormKey> defaults, string? label)
+        private static void AddMissingDefaults(List<FormKey> target, IEnumerable<FormKey> defaults, string label)
         {
             foreach (var fk in defaults)
             {
@@ -289,14 +297,14 @@ namespace FO4FalloutGeneticsPatch
             }
 
             if (!string.IsNullOrWhiteSpace(label))
-                Log($"Added/ensured {label}");
+                Log($"{label}: ensured defaults");
         }
 
         private static void AddRandomSimplePart(
             List<FormKey> target,
             List<IHeadPartGetter> source,
             Random random,
-            string? label)
+            string label)
         {
             if (source.Count == 0)
             {
@@ -323,7 +331,7 @@ namespace FO4FalloutGeneticsPatch
             List<FormKey> target,
             List<IHeadPartGetter> source,
             Random random,
-            string? label)
+            string label)
         {
             if (source.Count == 0)
             {
@@ -346,7 +354,7 @@ namespace FO4FalloutGeneticsPatch
         private static void AddDirectBundle(
             List<FormKey> target,
             IHeadPartGetter chosen,
-            string? label)
+            string label)
         {
             AddUnique(target, chosen.FormKey);
 
@@ -419,7 +427,68 @@ namespace FO4FalloutGeneticsPatch
             return DescribeHeadPart(hp);
         }
 
-        private static void Log(string text) => DebugLog.AppendLine(text);
+        private static void Log(string text)
+        {
+            lock (LogLock)
+            {
+                DebugLog.AppendLine(text);
+            }
+        }
+
+        private static void FlushLog(IPatcherState<IFallout4Mod, IFallout4ModGetter> state, string stage)
+        {
+            lock (LogLock)
+            {
+                var text = DebugLog.ToString();
+
+                var paths = new List<string>();
+
+                try
+                {
+                    var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                    if (!string.IsNullOrWhiteSpace(desktop))
+                        paths.Add(Path.Combine(desktop, "FalloutGenetics_debug_log.txt"));
+                }
+                catch { }
+
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(state.DataFolderPath))
+                        paths.Add(Path.Combine(state.DataFolderPath, "FalloutGenetics_debug_log.txt"));
+                }
+                catch { }
+
+                try
+                {
+                    var temp = Path.GetTempPath();
+                    if (!string.IsNullOrWhiteSpace(temp))
+                        paths.Add(Path.Combine(temp, "FalloutGenetics_debug_log.txt"));
+                }
+                catch { }
+
+                bool wroteAny = false;
+
+                foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        File.WriteAllText(path, text);
+                        wroteAny = true;
+                        Console.WriteLine($"DEBUG LOG WRITTEN ({stage}) TO: {path}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"FAILED TO WRITE DEBUG LOG ({stage}) TO: {path}");
+                        Console.WriteLine(ex.Message);
+                    }
+                }
+
+                if (!wroteAny)
+                {
+                    Console.WriteLine($"DEBUG LOG NOT WRITTEN AT STAGE: {stage}");
+                }
+            }
+        }
 
         private static PresetMorph Genetics(PresetMorph p1, PresetMorph p2, double t)
         {
