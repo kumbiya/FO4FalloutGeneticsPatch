@@ -33,7 +33,6 @@ namespace FO4FalloutGeneticsPatch
             var male = new GenderRecord();
             var neutral = new GenderRecord();
 
-            // Precompute direct extras exactly once from the winning records.
             var directExtrasByParent = new Dictionary<FormKey, List<FormKey>>();
 
             foreach (var hdptContext in state.LoadOrder.PriorityOrder.HeadPart().WinningContextOverrides())
@@ -55,19 +54,12 @@ namespace FO4FalloutGeneticsPatch
                 directExtrasByParent[record.FormKey] = extras;
             }
 
-            // Build pools using the original broad logic.
             foreach (var hdptContext in state.LoadOrder.PriorityOrder.HeadPart().WinningContextOverrides())
             {
                 var record = hdptContext.Record;
                 if (record is null) continue;
                 if (record.IsDeleted) continue;
                 if (record.MajorFlags.HasFlag(HeadPart.MajorFlag.NonPlayable)) continue;
-
-                if (record.ValidRaces.IsNull) continue;
-                if (!record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsGhouls.FormKey) &&
-                    !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHuman.FormKey) &&
-                    !record.ValidRaces.FormKey.Equals(Fallout4.FormList.HeadPartsHumanGhouls.FormKey))
-                    continue;
 
                 bool femaleFlag = record.Flags.HasFlag(HeadPart.Flag.Female);
                 bool maleFlag = record.Flags.HasFlag(HeadPart.Flag.Male);
@@ -196,7 +188,6 @@ namespace FO4FalloutGeneticsPatch
 
                 var newRecord = npcContext.GetOrAddAsOverride(state.PatchMod);
 
-                // Preserve all non-generated headparts from the existing NPC.
                 var finalParts = GetPreservedExistingNonGeneratedParts(record, state.LinkCache);
                 var presets = new List<Preset>();
 
@@ -211,7 +202,6 @@ namespace FO4FalloutGeneticsPatch
                     AddRandomBundledPartFromMap(finalParts, female.Hair, random, directExtrasByParent);
                     AddRandomSimplePart(finalParts, female.Brows, random);
                     AddRandomSimplePart(finalParts, female.Scar, random);
-
                     presets = female.Presets;
                 }
                 else
@@ -221,10 +211,7 @@ namespace FO4FalloutGeneticsPatch
                     AddRandomBundledPartFromMap(finalParts, male.Hair, random, directExtrasByParent);
                     AddRandomSimplePart(finalParts, male.Brows, random);
                     AddRandomSimplePart(finalParts, male.Scar, random);
-
-                    // Always assign facial hair if available.
                     AddRandomBundledPartFromMap(finalParts, male.FacialHair, random, directExtrasByParent);
-
                     presets = male.Presets;
                 }
 
